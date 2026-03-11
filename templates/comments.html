@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>回复任务 - 多平台自动营销系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #ff2442 0%, #ff6b6b 100%); color: white; padding: 20px 0; margin-bottom: 20px; }
+        header h1 { font-size: 24px; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav a { padding: 10px 20px; background: white; color: #333; text-decoration: none; border-radius: 8px; font-weight: 500; }
+        .nav a:hover, .nav a.active { background: #ff2442; color: white; }
+        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card h2 { font-size: 18px; margin-bottom: 20px; border-bottom: 2px solid #f0f0f0; padding-bottom: 12px; }
+        .alerts { display: grid; gap: 12px; margin-bottom: 20px; }
+        .alert { padding: 14px 16px; border-radius: 10px; border: 1px solid transparent; font-size: 14px; }
+        .alert-error { background: #fff2f0; color: #a8071a; border-color: #ffccc7; }
+        .alert-warning { background: #fffbe6; color: #ad6800; border-color: #ffe58f; }
+        .alert-success { background: #f6ffed; color: #237804; border-color: #b7eb8f; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 500; }
+        .form-group input, .form-group select { width: 100%; padding: 10px 14px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
+        .form-group input:focus { border-color: #ff2442; outline: none; }
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; cursor: pointer; border: none; }
+        .btn-primary { background: #ff2442; color: white; }
+        .btn-primary:hover { background: #e6203b; }
+        .btn-secondary { background: #f0f0f0; color: #333; }
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+        th { background: #fafafa; font-weight: 600; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; }
+        .badge-success { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
+        .badge-danger { background: #fff2f0; color: #ff4d4f; border: 1px solid #ffccc7; }
+        .badge-warning { background: #fffbe6; color: #faad14; border: 1px solid #ffe58f; }
+        .badge-default { background: #f5f5f5; color: #666; border: 1px solid #d9d9d9; }
+        .empty { text-align: center; padding: 60px; color: #999; }
+        .comment-content { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .error-text { max-width: 260px; color: #a8071a; font-size: 12px; margin-top: 6px; white-space: normal; word-break: break-word; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>多平台自动营销系统</h1>
+        </div>
+    </header>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">控制台</a>
+            <a href="/accounts">账号管理</a>
+            <a href="/search">内容搜索</a>
+            <a href="/comments" class="active">回复任务</a>
+            <a href="/products">产品管理</a>
+            <a href="/stats">数据统计</a>
+        </nav>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="alerts">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+        
+        <div class="card">
+            <h2>{{ platform_labels[current_platform] }} 批量回复</h2>
+            <form method="post" action="/comments/batch">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>选择账号 *</label>
+                        <select name="account_id" required>
+                            <option value="">请选择已登录账号</option>
+                            {% for account in accounts %}
+                            <option value="{{ account.id }}" {% if account.id == default_account_id %}selected{% endif %}>{{ account.nickname or account.phone }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>选择产品 *</label>
+                        <select name="product_id" required>
+                            <option value="">请选择推广产品</option>
+                            {% for product in products %}
+                            <option value="{{ product.id }}">{{ product.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>回复策略</label>
+                        <select name="strategy">
+                            <option value="soft">软性回复（推荐）</option>
+                            <option value="medium">中等强度</option>
+                            <option value="hard">硬广</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>最大回复数</label>
+                        <input type="number" name="max_comments" value="20" min="1" max="50">
+                    </div>
+                    <div class="form-group">
+                        <label>最低点赞数筛选</label>
+                        <input type="number" name="min_likes" value="0" min="0">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">开始批量回复</button>
+            </form>
+        </div>
+        
+        <div class="card">
+            <h2>{{ platform_labels[current_platform] }} 回复记录</h2>
+            <div style="margin-bottom:16px;">
+                <a href="/comments?account_id={{ default_account_id or '' }}" class="btn btn-secondary btn-sm">全部</a>
+                <a href="/comments?account_id={{ default_account_id or '' }}&status=success" class="btn btn-secondary btn-sm">成功</a>
+                <a href="/comments?account_id={{ default_account_id or '' }}&status=failed" class="btn btn-secondary btn-sm">失败</a>
+            </div>
+            {% if tasks %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>内容标题</th>
+                        <th>回复内容</th>
+                        <th>策略</th>
+                        <th>状态</th>
+                        <th>回复时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in tasks %}
+                    <tr>
+                        <td>{{ task.post_title or task.post_id }}</td>
+                        <td class="comment-content">{{ task.content }}</td>
+                        <td>
+                            {% if task.strategy == 'soft' %}
+                            <span class="badge badge-default">软性</span>
+                            {% elif task.strategy == 'medium' %}
+                            <span class="badge badge-warning">中等</span>
+                            {% else %}
+                            <span class="badge badge-danger">硬广</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if task.status == 'success' %}
+                            <span class="badge badge-success">成功</span>
+                            {% elif task.status == 'failed' %}
+                            <span class="badge badge-danger">失败</span>
+                            {% if task.error_message %}
+                            <div class="error-text">{{ task.error_message }}</div>
+                            {% endif %}
+                            {% else %}
+                            <span class="badge badge-default">待处理</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ task.commented_at or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty">
+                <p>暂无回复记录</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

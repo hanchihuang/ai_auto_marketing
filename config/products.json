@@ -1,0 +1,106 @@
+[
+  {
+    "code": "yx_course",
+    "name": "线上课程推广",
+    "description": "各类在线课程、教育培训产品推广",
+    "price": "咨询客服",
+    "wechat_id": "your_wechat",
+    "features": [
+      "课程咨询",
+      "试听安排",
+      "报名引导"
+    ],
+    "target_tags": ["学习", "课程", "教育", "培训", "技能提升", "考证", "考研", "英语", "编程", "副业"]
+  },
+  {
+    "code": "tj_product",
+    "name": "推荐好物",
+    "description": "美妆、护肤、服装等好物推荐",
+    "price": "见商品详情",
+    "wechat_id": "your_wechat",
+    "features": [
+      "产品介绍",
+      "购买链接",
+      "优惠信息"
+    ],
+    "target_tags": ["美妆", "护肤", "穿搭", "服装", "鞋子", "包包", "配饰", "发型", "化妆", "护肤"]
+  },
+  {
+    "code": "dd_service",
+    "name": "本地服务",
+    "description": "家政、摄影、旅游等本地生活服务",
+    "price": "面议",
+    "wechat_id": "your_wechat",
+    "features": [
+      "服务介绍",
+      "预约咨询",
+      "案例展示"
+    ],
+    "target_tags": ["家政", "保洁", "搬家", "摄影", "旅拍", "旅游", "民宿", "健身", "瑜伽", "SPA"]
+  },
+  {
+    "code": "digital_product",
+    "name": "数字产品",
+    "description": "软件、工具、素材等数字产品",
+    "price": "见产品详情",
+    "wechat_id": "your_wechat",
+    "features": [
+      "功能介绍",
+      "使用教程",
+      " License 销售"
+    ],
+    "target_tags": ["软件", "工具", "素材", "模板", "插件", "AI工具", "效率", "办公", "设计", "剪辑"]
+  },
+  {
+    "code": "health_product",
+    "name": "健康产品",
+    "description": "保健品、健身器材等健康相关产品",
+    "price": "咨询客服",
+    "wechat_id": "your_wechat",
+    "features": [
+      "产品咨询",
+      "使用指导",
+      "效果分享"
+    ],
+    "target_tags": ["健康", "养生", "保健", "减肥", "健身", "运动", "营养", "睡眠", "免疫力"]
+  },
+  {
+    "code": "fr_product",
+    "name": "食品饮料",
+    "description": "零食、特产、饮品等食品类推广",
+    "price": "见商品详情",
+    "wechat_id": "your_wechat",
+    "features": [
+      "产品介绍",
+      "口味分享",
+      "购买渠道"
+    ],
+    "target_tags": ["零食", "美食", "特产", "水果", "饮品", "茶叶", "甜品", "烘焙", "早餐", "夜宵"]
+  },
+  {
+    "code": "pet_product",
+    "name": "宠物用品",
+    "description": "猫粮、狗粮、宠物玩具等",
+    "price": "见商品详情",
+    "wechat_id": "your_wechat",
+    "features": [
+      "产品介绍",
+      "宠物分享",
+      "喂养咨询"
+    ],
+    "target_tags": ["宠物", "猫", "狗", "猫粮", "狗粮", "宠物玩具", "宠物用品", "萌宠"]
+  },
+  {
+    "code": "book_product",
+    "name": "图书文具",
+    "description": "书籍、绘本、文具等教育文化产品",
+    "price": "见商品详情",
+    "wechat_id": "your_wechat",
+    "features": [
+      "书籍推荐",
+      "内容分享",
+      "购买咨询"
+    ],
+    "target_tags": ["书", "图书", "绘本", "童书", "文具", "笔记本", "学习", "阅读", "书架"]
+  }
+]
