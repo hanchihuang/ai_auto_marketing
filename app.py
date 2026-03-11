@@ -274,7 +274,11 @@ def search_hot_posts():
     web_accessible_count = 0
     for post in posts:
         post["platform"] = platform
-        is_accessible = bot.is_post_web_accessible(post.get("url", ""))
+        if platform == "bilibili":
+            # 快速模式下不逐条打开详情页校验，真正评论时再检查可访问性
+            is_accessible = True
+        else:
+            is_accessible = bot.is_post_web_accessible(post.get("url", ""))
         post["web_accessible"] = is_accessible
         post["accessibility_checked_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         checked_posts.append(post)

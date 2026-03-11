@@ -9,11 +9,13 @@ Bilibili 自动营销机器人
 
 from __future__ import annotations
 
+import json
 import random
 import time
 from datetime import datetime
 from typing import Any, Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -28,11 +30,13 @@ from xiaohongshu import XiaohongshuAccount
 class BilibiliBot:
     BASE_URL = "https://www.bilibili.com"
     SEARCH_URL = "https://search.bilibili.com/all"
+    FAST_MODE = True
 
     def __init__(self) -> None:
         self.driver: Optional[webdriver.Chrome] = None
         self.account: Optional[XiaohongshuAccount] = None
         self.last_error = ""
+        self.cookie_string = ""
 
     def init_driver(self, headless: bool = False) -> None:
         options = Options()
@@ -78,13 +82,14 @@ class BilibiliBot:
             return False
 
         try:
+            self.cookie_string = cookie
             self.driver.get(self.BASE_URL)
-            time.sleep(2)
+            time.sleep(1)
             for item in self._parse_cookie_string(cookie):
                 self.driver.add_cookie(item)
 
             self.driver.get(self.BASE_URL)
-            time.sleep(4)
+            time.sleep(2)
 
             if self._is_login_page():
                 self.last_error = "Bilibili Cookie 登录失败，请重新复制浏览器 Cookie"
@@ -138,13 +143,13 @@ class BilibiliBot:
         self.last_error = ""
         try:
             self.driver.get(f"{self.SEARCH_URL}?keyword={quote(keyword)}")
-            time.sleep(5)
+            time.sleep(2)
 
             posts: list[dict[str, Any]] = []
             seen_ids: set[str] = set()
             scroll_count = 0
 
-            while len(posts) < limit and scroll_count < 8:
+            while len(posts) < limit and scroll_count < 4:
                 cards = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/video/BV']")
                 for card in cards:
                     post = self._parse_video_card(card, keyword)
@@ -156,7 +161,7 @@ class BilibiliBot:
                         break
 
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(random.uniform(2, 4))
+                time.sleep(random.uniform(0.8, 1.5))
                 scroll_count += 1
 
             return posts[:limit]
@@ -243,9 +248,11 @@ class BilibiliBot:
     def is_post_web_accessible(self, post_url: str) -> bool:
         if not self.driver or not post_url:
             return False
+        if self.FAST_MODE:
+            return True
         try:
             self.driver.get(post_url)
-            time.sleep(3)
+            time.sleep(1.5)
             return not bool(self._detect_uncommentable_page())
         except Exception:
             return False
@@ -258,11 +265,21 @@ class BilibiliBot:
         url = post_url or f"{self.BASE_URL}/video/{post_id}"
         try:
             self.driver.get(url)
-            time.sleep(5)
+            time.sleep(2)
 
             page_error = self._detect_uncommentable_page()
             if page_error:
                 self.last_error = page_error
+                return False
+
+            aid = self.driver.execute_script(
+                "return (window.__INITIAL_STATE__ && (window.__INITIAL_STATE__.aid || (window.__INITIAL_STATE__.videoData && window.__INITIAL_STATE__.videoData.aid))) || null;"
+            )
+            if aid:
+                api_success, api_error = self._comment_via_api(int(aid), content, self.driver.current_url)
+                if api_success:
+                    return True
+                self.last_error = api_error
                 return False
 
             editor = self._find_clickable(
@@ -301,6 +318,58 @@ class BilibiliBot:
         except Exception as exc:
             self.last_error = f"评论失败: {exc}"
             return False
+
+    def _comment_via_api(self, aid: int, content: str, referer_url: str) -> tuple[bool, str]:
+        csrf = self._get_cookie_value("bili_jct")
+        if not csrf:
+            return False, "Bilibili Cookie 缺少 bili_jct，无法调用评论接口"
+
+        payload = urlencode(
+            {
+                "oid": str(aid),
+                "type": "1",
+                "message": content,
+                "plat": "1",
+                "csrf": csrf,
+            }
+        ).encode("utf-8")
+
+        req = Request(
+            "https://api.bilibili.com/x/v2/reply/add",
+            data=payload,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "Origin": self.BASE_URL,
+                "Referer": referer_url,
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+                ),
+                "Cookie": self.cookie_string,
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            if data.get("code") == 0:
+                return True, ""
+            return False, f"哔哩哔哩评论接口失败: {data.get('message') or data.get('msg') or data.get('code')}"
+        except Exception as exc:
+            return False, f"哔哩哔哩评论接口请求失败: {exc}"
+
+    def _get_cookie_value(self, name: str) -> str:
+        if self.cookie_string:
+            for chunk in self.cookie_string.split(";"):
+                part = chunk.strip()
+                if part.startswith(f"{name}="):
+                    return part.split("=", 1)[1]
+        if self.driver:
+            for cookie in self.driver.get_cookies():
+                if cookie.get("name") == name:
+                    return cookie.get("value", "")
+        return ""
 
     def _find_clickable(self, selectors: list[tuple[str, str]], timeout: int = 5):
         for by, selector in selectors:
