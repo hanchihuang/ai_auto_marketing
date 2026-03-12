@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 @dataclass
@@ -42,7 +44,12 @@ class TelegramBot:
     def __init__(self, token: str | None = None, proxy: str | None = None):
         self.token = token
         self.last_error = ""
-        # 自动检测代理设置
+
+        # 优先使用环境变量中的代理设置
+        if not proxy:
+            proxy = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("http_proxy") or os.environ.get("https_proxy")
+
+        # 如果环境变量没有代理，则自动检测
         if not proxy:
             # 尝试多个常用代理端口
             for port in [7897, 7890, 1080, 8080]:
@@ -58,8 +65,22 @@ class TelegramBot:
                         break
                 except Exception:
                     continue
+
         self.proxy = proxy
         self._session = requests.Session()
+
+        # 配置重试策略来处理 SSL 错误和临时网络问题
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "POST", "OPTIONS"],
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
+
         if proxy:
             self._session.proxies = {
                 "http": proxy,

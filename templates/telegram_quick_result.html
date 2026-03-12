@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>发送结果 - Telegram 一键群发</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #229ED9 0%, #0088cc 100%); color: white; padding: 20px 0; margin-bottom: 20px; }
+        header h1 { font-size: 24px; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav a { padding: 10px 20px; background: white; color: #333; text-decoration: none; border-radius: 8px; font-weight: 500; }
+        .nav a:hover, .nav a.active { background: #229ED9; color: white; }
+        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card h2 { font-size: 18px; margin-bottom: 20px; border-bottom: 2px solid #f0f0f0; padding-bottom: 12px; }
+
+        .result-summary { text-align: center; padding: 30px; }
+        .result-summary h3 { font-size: 24px; margin-bottom: 20px; }
+        .result-summary.success h3 { color: #52c41a; }
+        .result-summary.warning h3 { color: #fa8c16; }
+        .result-summary.error h3 { color: #ff4d4f; }
+
+        .stats { display: flex; justify-content: center; gap: 40px; margin-bottom: 20px; }
+        .stat-item { text-align: center; }
+        .stat-item .number { font-size: 36px; font-weight: bold; }
+        .stat-item .number.success { color: #52c41a; }
+        .stat-item .number.failed { color: #ff4d4f; }
+        .stat-item .number.pending { color: #fa8c16; }
+        .stat-item .label { color: #666; font-size: 14px; }
+
+        .message-preview { background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 20px 0; white-space: pre-wrap; font-size: 14px; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+        th { background: #fafafa; font-weight: 600; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; }
+        .badge-success { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
+        .badge-danger { background: #fff2f0; color: #ff4d4f; border: 1px solid #ffccc7; }
+        .badge-warning { background: #fffbe6; color: #fa8c16; border: 1px solid #ffe58f; }
+
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; cursor: pointer; border: none; font-weight: 500; }
+        .btn-primary { background: #229ED9; color: white; }
+        .btn-primary:hover { background: #1a8cc7; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>发送结果</h1>
+        </div>
+    </header>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">控制台</a>
+            <a href="/telegram/quick">返回一键群发</a>
+            <a href="/telegram">Telegram 营销</a>
+        </nav>
+
+        <div class="card">
+            <div class="result-summary {% if success_count > 0 %}success{% elif failed_count > 0 %}warning{% else %}error{% endif %}">
+                <h3>{% if dry_run %}试运行完成{% else %}发送完成{% endif %}</h3>
+
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="number success">{{ success_count }}</div>
+                        <div class="label">成功</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="number failed">{{ failed_count }}</div>
+                        <div class="label">失败</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="number">{{ results|length }}</div>
+                        <div class="label">总计</div>
+                    </div>
+                </div>
+
+                <p>Bot: <strong>{{ bot_name }}</strong></p>
+            </div>
+
+            <h2>发送的消息内容</h2>
+            <div class="message-preview">{{ message }}</div>
+
+            <h2>发送详情</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Chat ID</th>
+                        <th>状态</th>
+                        <th>备注</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for result in results %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td><code>{{ result.chat_id }}</code></td>
+                        <td>
+                            {% if result.status == 'success' %}
+                            <span class="badge badge-success">成功</span>
+                            {% elif result.status == 'pending' %}
+                            <span class="badge badge-warning">待发送</span>
+                            {% else %}
+                            <span class="badge badge-danger">失败</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ result.error or result.message or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="text-align:center;">
+            <a href="/telegram/quick" class="btn btn-primary">继续发送</a>
+        </div>
+    </div>
+</body>
+</html>

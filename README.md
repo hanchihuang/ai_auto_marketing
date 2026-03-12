@@ -140,11 +140,16 @@ http://127.0.0.1:5055
 | 状态 | 说明 |
 |------|------|
 | 成功 | 显示 Bot 名称（如 `hhchhchhcbot`），表示连接正常 |
-| 失败 | 显示错误信息，常见原因：<br>- `SOCKSHTTPSConnectionPool...SSL: UNEXPECTED_EOF` → 代理端口错误<br>- `Max retries exceeded` → 网络问题或代理不可用 |
+| 失败 | 显示错误信息，常见原因：<br>- `SOCKSHTTPSConnectionPool...SSL: UNEXPECTED_EOF` → 代理端口错误<br>- `Max retries exceeded` → 网络问题或代理不可用<br>- `Connection refused` → 代理未启动或端口错误 |
 
 **代理配置**：
 
-代码会自动检测可用代理端口（7897, 7890, 1080, 8080）。如果验证失败：
+代码会按以下优先级自动检测代理：
+
+1. **环境变量**（最高优先级）：`HTTP_PROXY`、`HTTPS_PROXY`、`http_proxy`、`https_proxy`
+2. **自动检测**：依次尝试本地常用端口 7897, 7890, 1080, 8080
+
+如果验证失败，可以手动设置环境变量：
 
 ```bash
 # 手动指定代理端口
@@ -152,6 +157,13 @@ export HTTP_PROXY=http://127.0.0.1:7897
 export HTTPS_PROXY=http://127.0.0.1:7897
 python app.py
 ```
+
+**重试策略**：
+
+代码内置了自动重试机制来处理临时网络问题：
+- 最多重试 3 次
+- 重试间隔递增（1秒、2秒、3秒）
+- 针对 429、500、502、503、504 状态码自动重试
 
 ### 3. 配置产品
 

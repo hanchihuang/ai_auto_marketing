@@ -102,6 +102,10 @@ def search_posts_for_account(account: dict, keyword: str, limit_value: int) -> d
     platform = account.get("platform", "x")
     platform_label = PLATFORM_LABELS.get(platform, platform)
 
+    # Telegram 账号不支持内容搜索
+    if platform == "telegram":
+        return {"ok": False, "message": "Telegram 账号不支持内容搜索，请使用 X.com 或哔哩哔哩账号"}
+
     bot = ensure_logged_in_bot(account)
     if bot is None:
         return {"ok": False, "message": "账号缺少可用登录信息，请重新登录"}
@@ -595,9 +599,11 @@ def run_workflow():
         return redirect(url_for("search_page", keyword=keyword))
 
     accounts = storage.list_xhs_accounts()
+    # 排除 Telegram 账号
+    accounts = [a for a in accounts if a.get("platform") != "telegram"]
     workflow_accounts = {
         platform: get_default_account_by_platform(accounts, platform)
-        for platform in PLATFORM_LABELS
+        for platform in ["x", "bilibili"]
     }
     available_accounts = {platform: account for platform, account in workflow_accounts.items() if account}
     if not available_accounts:
@@ -605,7 +611,7 @@ def run_workflow():
         return redirect(url_for("search_page", keyword=keyword))
 
     cleared_counts = {}
-    for platform in PLATFORM_LABELS:
+    for platform in ["x", "bilibili"]:
         cleared_counts[platform] = storage.clear_xhs_hot_posts(platform)
     flash(
         (
@@ -1099,8 +1105,18 @@ def telegram_marketing_send():
     success_count = 0
     failed_count = 0
     skipped_blacklist = 0
+    skipped_sober = 0  # 统计被过滤的 Sober 群组数量
 
     for group in groups:
+        group_title = group.get("title", "")
+
+        # 过滤掉群组名称含有 "Sober" 或 "sober" 的群组
+        if "sober" in group_title.lower():
+            skipped_sober += 1
+            # 自动屏蔽该群组
+            storage.block_telegram_group(group["id"], "包含关键词: Sober")
+            continue
+
         # 检查黑名单关键词
         if exclude_blocked and blacklist_keywords:
             if bot.is_blacklisted(group["title"], blacklist_keywords):
@@ -1139,9 +1155,9 @@ def telegram_marketing_send():
                 failed_count += 1
 
     if dry_run:
-        flash(f"试运行完成，计划发送到 {success_count} 个群组，跳过黑名单 {skipped_blacklist} 个", "success")
+        flash(f"试运行完成，计划发送到 {success_count} 个群组，跳过黑名单 {skipped_blacklist} 个，跳过 Sober 群组 {skipped_sober} 个", "success")
     else:
-        flash(f"营销发送完成，成功 {success_count} 个，失败 {failed_count} 个，跳过黑名单 {skipped_blacklist} 个",
+        flash(f"营销发送完成，成功 {success_count} 个，失败 {failed_count} 个，跳过黑名单 {skipped_blacklist} 个，跳过 Sober 群组 {skipped_sober} 个",
               "success" if success_count > 0 else "warning")
 
     return redirect(url_for("telegram_page"))
@@ -1159,6 +1175,159 @@ def telegram_blacklist_settings():
     # 目前只返回成功消息
     flash(f"黑名单关键词已保存: {', '.join(key_list)}", "success")
     return redirect(url_for("telegram_page"))
+
+
+# ==================== Telegram 一键群发 ====================
+
+@app.get("/telegram/quick")
+def telegram_quick_send_page():
+    """Telegram 一键群发页面"""
+    return render_template("telegram_quick.html")
+
+
+@app.post("/telegram/quick/send")
+def telegram_quick_send():
+    """Telegram 一键群发"""
+    bot_token = request.form.get("bot_token", "").strip()
+    message = request.form.get("message", "").strip()
+    groups_text = request.form.get("groups_text", "").strip()
+    dry_run = request.form.get("dry_run") == "1"
+
+    if not bot_token:
+        flash("请输入 Bot Token", "error")
+        return redirect(url_for("telegram_quick_send_page"))
+
+    if not message:
+        flash("请输入要发送的消息内容", "error")
+        return redirect(url_for("telegram_quick_send_page"))
+
+    if not groups_text:
+        flash("请输入群组 Chat ID（每行一个）", "error")
+        return redirect(url_for("telegram_quick_send_page"))
+
+    # 解析群组 ID 列表
+    group_ids = []
+    for line in groups_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            chat_id = int(line.replace("-100", "-").replace("-", ""))
+            # 确保是负数格式
+            if not line.startswith("-"):
+                chat_id = -abs(chat_id)
+            else:
+                chat_id = int(line)
+            group_ids.append(chat_id)
+        except ValueError:
+            flash(f"无效的 Chat ID: {line}", "error")
+            return redirect(url_for("telegram_quick_send_page"))
+
+    if not group_ids:
+        flash("没有有效的群组 ID", "error")
+        return redirect(url_for("telegram_quick_send_page"))
+
+    # 创建 Bot 实例
+    bot = TelegramBot(bot_token)
+    if not bot.test_connection():
+        flash(f"Bot 连接失败: {bot.last_error}", "error")
+        return redirect(url_for("telegram_quick_send_page"))
+
+    # 黑名单关键词（禁止发送给包含这些关键词的群组）
+    blacklist_keywords = ["greeks", "格致"]
+
+    # 获取 Bot 信息
+    bot_name = getattr(bot, "bot_name", "Unknown")
+
+    # 发送消息
+    success_count = 0
+    failed_count = 0
+    skipped_blacklist = 0
+    results = []
+
+    for chat_id in group_ids:
+        # 先获取群组信息检查黑名单
+        chat_info = bot.get_chat(chat_id)
+        group_title = ""
+        if chat_info:
+            group_title = chat_info.get("title", "")
+            # 检查黑名单关键词（不区分大小写）
+            for keyword in blacklist_keywords:
+                if keyword.lower() in group_title.lower():
+                    skipped_blacklist += 1
+                    results.append({
+                        "chat_id": chat_id,
+                        "group_title": group_title,
+                        "status": "skipped",
+                        "reason": f"群组标题包含关键词 '{keyword}'",
+                    })
+                    continue
+        else:
+            # 无法获取群组信息时，记录错误但继续尝试发送
+            results.append({
+                "chat_id": chat_id,
+                "group_title": group_title,
+                "status": "unknown",
+                "reason": bot.last_error or "无法获取群组信息",
+            })
+
+        if dry_run:
+            # 试运行模式
+            results.append({
+                "chat_id": chat_id,
+                "group_title": group_title,
+                "status": "pending",
+                "message": "试运行模式",
+            })
+            success_count += 1
+        else:
+            # 真正发送消息
+            success = bot.send_message(chat_id, message)
+            if success:
+                success_count += 1
+                results.append({
+                    "chat_id": chat_id,
+                    "group_title": group_title,
+                    "status": "success",
+                })
+            else:
+                failed_count += 1
+                results.append({
+                    "chat_id": chat_id,
+                    "group_title": group_title,
+                    "status": "failed",
+                    "error": bot.last_error,
+                })
+
+        # 避免发送过快
+        time.sleep(0.3)
+
+    # 保存到数据库（仅非试运行模式）
+    if not dry_run:
+        for result in results:
+            if result["status"] == "success":
+                storage.insert_telegram_marketing_task({
+                    "group_id": result.get("chat_id"),
+                    "content": message,
+                    "status": "success",
+                    "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+
+    mode_text = "试运行" if dry_run else "正式发送"
+    flash(
+        f"{mode_text}完成：成功 {success_count} 个，失败 {failed_count} 个",
+        "success" if success_count > 0 else "warning",
+    )
+
+    return render_template(
+        "telegram_quick_result.html",
+        bot_name=bot_name,
+        message=message,
+        results=results,
+        success_count=success_count,
+        failed_count=failed_count,
+        dry_run=dry_run,
+    )
 
 
 if __name__ == "__main__":
