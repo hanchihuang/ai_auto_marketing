@@ -94,14 +94,78 @@
                     </div>
                     <div class="form-group">
                         <label>搜索数量</label>
-                        <input type="number" name="limit" value="30" min="10" max="100">
+                        <input type="number" name="limit" value="100" min="10" max="100">
                     </div>
                 </div>
                 <button type="submit" class="btn btn-primary">开始搜索 {{ platform_labels[current_platform] }}</button>
             </form>
-            <form method="post" action="/search/hot-posts/clear" style="margin-top:16px;" onsubmit="return confirm('确认清空当前平台的已搜集内容吗？');">
-                <input type="hidden" name="account_id" value="{{ account_id or '' }}">
-                <button type="submit" class="btn btn-danger">一键清空已搜集{{ platform_labels[current_platform] }}内容</button>
+            <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">
+                <form method="post" action="/search/hot-posts/clear" onsubmit="return confirm('确认清空所有已保存的 X.com 帖子吗？');">
+                    <input type="hidden" name="account_id" value="{{ account_id or '' }}">
+                    <input type="hidden" name="platform" value="x">
+                    <button type="submit" class="btn btn-danger">一键清空所有 X.com 已保存帖子</button>
+                </form>
+                <form method="post" action="/search/hot-posts/clear" onsubmit="return confirm('确认清空所有已保存的哔哩哔哩帖子吗？');">
+                    <input type="hidden" name="account_id" value="{{ account_id or '' }}">
+                    <input type="hidden" name="platform" value="bilibili">
+                    <button type="submit" class="btn btn-danger">一键清空所有哔哩哔哩已保存帖子</button>
+                </form>
+                <form method="post" action="/search/hot-posts/clear" onsubmit="return confirm('确认清空 X.com 和哔哩哔哩全部已保存帖子吗？');">
+                    <input type="hidden" name="account_id" value="{{ account_id or '' }}">
+                    <button type="submit" class="btn btn-danger">一键清空全部已保存帖子</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>X.com / 哔哩哔哩 一键工作流</h2>
+            <p style="color:#666;font-size:13px;margin-bottom:12px;">
+                输入一个关键词后，系统会同时调用 X.com 和哔哩哔哩的在线账号并行执行“先搜索，再批量评论”。如果某个平台没有在线账号，会自动跳过。
+            </p>
+            <form method="post" action="/workflow/run">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>并行账号</label>
+                        <div style="padding:10px 14px;border:1px solid #d9d9d9;border-radius:6px;font-size:14px;background:#fafafa;line-height:1.7;">
+                            X.com：{{ (default_workflow_accounts['x'].nickname or default_workflow_accounts['x'].phone) if default_workflow_accounts['x'] else '未找到在线账号' }}<br>
+                            哔哩哔哩：{{ (default_workflow_accounts['bilibili'].nickname or default_workflow_accounts['bilibili'].phone) if default_workflow_accounts['bilibili'] else '未找到在线账号' }}
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>搜索关键词 *</label>
+                        <input type="text" name="keyword" value="{{ keyword or '' }}" placeholder="输入一次关键词，同时搜索 X.com 和哔哩哔哩" required>
+                    </div>
+                    <div class="form-group">
+                        <label>搜索数量</label>
+                        <input type="number" name="limit" value="100" min="10" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>选择产品 *</label>
+                        <select name="product_id" required>
+                            <option value="">请选择推广产品</option>
+                            {% for product in products %}
+                            <option value="{{ product.id }}" {% if product.id == default_product_id %}selected{% endif %}>{{ product.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>回复策略</label>
+                        <select name="strategy">
+                            <option value="soft">软性回复（推荐）</option>
+                            <option value="medium">中等强度</option>
+                            <option value="hard">硬广</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>最大回复数</label>
+                        <input type="number" name="max_comments" value="100" min="1" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>最低点赞数筛选</label>
+                        <input type="number" name="min_likes" value="0" min="0">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">一键执行：先搜索再批量评论</button>
             </form>
         </div>
         

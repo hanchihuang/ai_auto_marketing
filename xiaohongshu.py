@@ -22,6 +22,7 @@ from urllib.parse import quote, urlparse
 
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -389,36 +390,33 @@ class XiaohongshuBot:
                 self.last_error = page_error
                 return False
 
-            editor = self._find_clickable(
-                [
-                    (By.CSS_SELECTOR, '[data-testid="tweetTextarea_0"]'),
-                    (By.XPATH, '//*[@role="textbox"]'),
-                ],
-                timeout=4,
-            )
+            self._dismiss_overlays()
+            editor = self._find_reply_editor(timeout=4)
             if editor is None:
                 reply_button = self._find_clickable(
                     [
                         (By.CSS_SELECTOR, '[data-testid="reply"]'),
-                        (By.XPATH, '//*[contains(@aria-label, "Reply") or contains(@aria-label, "回复")]'),
+                        (By.XPATH, '//button[contains(@aria-label, "Reply") or contains(@aria-label, "回复")]'),
+                        (By.XPATH, '//*[contains(@aria-label, "Reply") or contains(@aria-label, "回复")]/ancestor::button[1]'),
                     ],
                     timeout=8,
                 )
                 if reply_button is not None:
                     self._safe_click(reply_button)
-                    time.sleep(1)
-                editor = self._find_clickable(
-                    [
-                        (By.CSS_SELECTOR, '[data-testid="tweetTextarea_0"]'),
-                        (By.XPATH, '//*[@role="textbox"]'),
-                    ],
-                    timeout=8,
-                )
+                    time.sleep(1.5)
+                    self._dismiss_overlays()
+                editor = self._find_reply_editor(timeout=8)
             if editor is None:
                 self.last_error = "未找到回复输入框，可能当前账号无回复权限或页面结构变化"
                 return False
 
             self._safe_click(editor)
+            self.driver.execute_script("arguments[0].focus();", editor)
+            try:
+                editor.send_keys(Keys.CONTROL, "a")
+                editor.send_keys(Keys.DELETE)
+            except Exception:
+                pass
             editor.send_keys(content)
             time.sleep(1)
 
@@ -426,6 +424,7 @@ class XiaohongshuBot:
                 [
                     (By.CSS_SELECTOR, '[data-testid="tweetButton"]'),
                     (By.CSS_SELECTOR, '[data-testid="tweetButtonInline"]'),
+                    (By.XPATH, '//div[@role="dialog"]//button[@data-testid="tweetButton"]'),
                     (By.XPATH, '//span[text()="Reply"]/ancestor::button'),
                 ],
                 timeout=8,
@@ -440,6 +439,31 @@ class XiaohongshuBot:
         except Exception as exc:
             self.last_error = f"回复失败: {exc}"
             return False
+
+    def _find_reply_editor(self, timeout: int = 5):
+        selectors = [
+            (By.CSS_SELECTOR, '[data-testid="tweetTextarea_0"]'),
+            (By.XPATH, '//div[@role="dialog"]//*[@role="textbox"]'),
+            (By.XPATH, '//*[@role="textbox" and @contenteditable="true"]'),
+            (By.XPATH, '//*[@role="textbox"]'),
+        ]
+
+        end_at = time.time() + timeout
+        while time.time() < end_at:
+            for by, selector in selectors:
+                try:
+                    elements = self.driver.find_elements(by, selector)
+                    for element in elements:
+                        if not element.is_displayed():
+                            continue
+                        contenteditable = (element.get_attribute("contenteditable") or "").lower()
+                        role = (element.get_attribute("role") or "").lower()
+                        if role == "textbox" or contenteditable == "true":
+                            return element
+                except Exception:
+                    continue
+            time.sleep(0.5)
+        return None
 
     def _find_clickable(self, selectors: list[tuple[str, str]], timeout: int = 5):
         for by, selector in selectors:
@@ -463,16 +487,55 @@ class XiaohongshuBot:
             pass
 
         try:
+            ActionChains(self.driver).move_to_element(element).pause(0.2).click(element).perform()
+            return
+        except Exception:
+            pass
+
+        try:
             element.click()
             return
         except Exception:
             pass
 
         try:
-            self.driver.execute_script("arguments[0].click();", element)
+            self.driver.execute_script(
+                """
+                const el = arguments[0];
+                el.focus();
+                el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                el.click();
+                """,
+                element,
+            )
             return
         except Exception as exc:
             raise exc
+
+    def _dismiss_overlays(self) -> None:
+        if not self.driver:
+            return
+        try:
+            ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(0.3)
+        except Exception:
+            pass
+
+        for selector in [
+            '[data-testid="sheetDialog"] [aria-label="Close"]',
+            '[aria-label="Close"]',
+            '[data-testid="app-bar-close"]',
+        ]:
+            try:
+                close_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if close_button.is_displayed():
+                    self._safe_click(close_button)
+                    time.sleep(0.3)
+                    break
+            except Exception:
+                continue
 
     def _detect_uncommentable_page(self) -> str:
         if not self.driver:

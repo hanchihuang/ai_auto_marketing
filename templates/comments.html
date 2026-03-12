@@ -70,6 +70,12 @@
         
         <div class="card">
             <h2>{{ platform_labels[current_platform] }} 批量回复</h2>
+            <p style="color:#666;font-size:13px;margin-bottom:12px;">
+                如果要执行“先搜索再批量评论”的完整工作流，请前往内容搜索页。该工作流同时支持 X.com 和哔哩哔哩，并会按所选账号自动切换平台。
+            </p>
+            <div style="margin-bottom:16px;">
+                <a href="/search?account_id={{ default_account_id or '' }}" class="btn btn-secondary">前往一键工作流</a>
+            </div>
             <form method="post" action="/comments/batch">
                 <div class="form-row">
                     <div class="form-group">
@@ -86,7 +92,7 @@
                         <select name="product_id" required>
                             <option value="">请选择推广产品</option>
                             {% for product in products %}
-                            <option value="{{ product.id }}">{{ product.name }}</option>
+                            <option value="{{ product.id }}" {% if product.id == default_product_id %}selected{% endif %}>{{ product.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -100,7 +106,7 @@
                     </div>
                     <div class="form-group">
                         <label>最大回复数</label>
-                        <input type="number" name="max_comments" value="20" min="1" max="50">
+                        <input type="number" name="max_comments" value="100" min="1" max="100">
                     </div>
                     <div class="form-group">
                         <label>最低点赞数筛选</label>
