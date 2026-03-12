@@ -104,6 +104,32 @@ class Storage:
                     accounts_active INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL
                 );
+
+                -- Telegram 群组表
+                CREATE TABLE IF NOT EXISTS telegram_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER UNIQUE NOT NULL,
+                    title TEXT NOT NULL,
+                    username TEXT,
+                    type TEXT DEFAULT 'group',
+                    member_count INTEGER,
+                    invite_link TEXT,
+                    is_blocked INTEGER DEFAULT 0,
+                    block_reason TEXT,
+                    added_at TEXT NOT NULL,
+                    last_message_at TEXT
+                );
+
+                -- Telegram 营销任务表
+                CREATE TABLE IF NOT EXISTS telegram_marketing_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    status TEXT DEFAULT 'pending',
+                    sent_at TEXT,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_column(conn, "xhs_accounts", "platform", "TEXT DEFAULT 'x'")
@@ -597,5 +623,213 @@ class Storage:
             row = conn.execute(
                 "SELECT * FROM xhs_stats WHERE date = ?",
                 (date,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    # ==================== Telegram 群组管理 ====================
+
+    def insert_telegram_group(self, payload: dict[str, Any]) -> int:
+        """添加 Telegram 群组"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR REPLACE INTO telegram_groups (
+                    chat_id, title, username, type, member_count,
+                    invite_link, is_blocked, block_reason, added_at, last_message_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["chat_id"],
+                    payload.get("title", ""),
+                    payload.get("username"),
+                    payload.get("type", "group"),
+                    payload.get("member_count"),
+                    payload.get("invite_link"),
+                    payload.get("is_blocked", 0),
+                    payload.get("block_reason", ""),
+                    now,
+                    payload.get("last_message_at"),
+                ),
+            )
+            return cursor.lastrowid
+
+    def update_telegram_group(self, group_id: int, payload: dict[str, Any]) -> None:
+        """更新 Telegram 群组信息"""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE telegram_groups SET
+                    title = COALESCE(?, title),
+                    username = COALESCE(?, username),
+                    member_count = COALESCE(?, member_count),
+                    invite_link = COALESCE(?, invite_link),
+                    is_blocked = COALESCE(?, is_blocked),
+                    block_reason = COALESCE(?, block_reason),
+                    last_message_at = COALESCE(?, last_message_at)
+                WHERE id = ?
+                """,
+                (
+                    payload.get("title"),
+                    payload.get("username"),
+                    payload.get("member_count"),
+                    payload.get("invite_link"),
+                    payload.get("is_blocked"),
+                    payload.get("block_reason"),
+                    payload.get("last_message_at"),
+                    group_id,
+                ),
+            )
+
+    def list_telegram_groups(
+        self,
+        blocked_only: bool = False,
+        search_keyword: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """列出 Telegram 群组"""
+        with self._connect() as conn:
+            sql = "SELECT * FROM telegram_groups WHERE 1=1"
+            params = []
+
+            if blocked_only:
+                sql += " AND is_blocked = 1"
+
+            if search_keyword:
+                sql += " AND title LIKE ?"
+                params.append(f"%{search_keyword}%")
+
+            sql += " ORDER BY added_at DESC"
+
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_telegram_group(self, group_id: int) -> dict[str, Any] | None:
+        """获取 Telegram 群组"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM telegram_groups WHERE id = ?",
+                (group_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_telegram_group_by_chat_id(self, chat_id: int) -> dict[str, Any] | None:
+        """通过 chat_id 获取 Telegram 群组"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM telegram_groups WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_telegram_group(self, group_id: int) -> bool:
+        """删除 Telegram 群组"""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM telegram_groups WHERE id = ?",
+                (group_id,),
+            )
+            return cursor.rowcount > 0
+
+    def block_telegram_group(self, group_id: int, reason: str = "") -> None:
+        """屏蔽 Telegram 群组"""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE telegram_groups SET is_blocked = 1, block_reason = ? WHERE id = ?",
+                (reason, group_id),
+            )
+
+    def unblock_telegram_group(self, group_id: int) -> None:
+        """取消屏蔽 Telegram 群组"""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE telegram_groups SET is_blocked = 0, block_reason = '' WHERE id = ?",
+                (group_id,),
+            )
+
+    def get_active_telegram_groups(self) -> list[dict[str, Any]]:
+        """获取未屏蔽的群组列表"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM telegram_groups WHERE is_blocked = 0 ORDER BY title"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_blocked_keywords(self) -> list[str]:
+        """获取黑名单关键词列表"""
+        return ["sober", "戒酒", "戒毒", "康复", "recovery", "aa"]
+
+    def save_blocked_keywords(self, keywords: list[str]) -> None:
+        """保存自定义黑名单关键词"""
+        # 这里可以用配置文件或者数据库存储，目前使用默认列表
+        # 如果需要持久化，可以添加到数据库的设置表中
+        pass
+
+    # ==================== Telegram 营销任务 ====================
+
+    def insert_telegram_marketing_task(self, payload: dict[str, Any]) -> int:
+        """创建 Telegram 营销任务"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO telegram_marketing_tasks (
+                    group_id, content, status, sent_at, error_message, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["group_id"],
+                    payload["content"],
+                    payload.get("status", "pending"),
+                    payload.get("sent_at", ""),
+                    payload.get("error_message", ""),
+                    now,
+                ),
+            )
+            return cursor.lastrowid
+
+    def update_telegram_marketing_task(
+        self, task_id: int, payload: dict[str, Any]
+    ) -> None:
+        """更新 Telegram 营销任务"""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE telegram_marketing_tasks SET
+                    status = COALESCE(?, status),
+                    sent_at = COALESCE(?, sent_at),
+                    error_message = COALESCE(?, error_message)
+                WHERE id = ?
+                """,
+                (
+                    payload.get("status"),
+                    payload.get("sent_at"),
+                    payload.get("error_message"),
+                    task_id,
+                ),
+            )
+
+    def list_telegram_marketing_tasks(
+        self,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """列出 Telegram 营销任务"""
+        with self._connect() as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM telegram_marketing_tasks WHERE status = ? ORDER BY id DESC",
+                    (status,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM telegram_marketing_tasks ORDER BY id DESC"
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_telegram_marketing_task(self, task_id: int) -> dict[str, Any] | None:
+        """获取 Telegram 营销任务"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM telegram_marketing_tasks WHERE id = ?",
+                (task_id,),
             ).fetchone()
         return dict(row) if row else None

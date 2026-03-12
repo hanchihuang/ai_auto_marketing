@@ -70,6 +70,7 @@
                         <select name="platform" required>
                             <option value="x">X.com</option>
                             <option value="bilibili">哔哩哔哩</option>
+                            <option value="telegram">Telegram Bot</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -77,8 +78,8 @@
                         <input type="text" name="phone" placeholder="@handle 或邮箱，仅用于本地标识" required>
                     </div>
                     <div class="form-group">
-                        <label>平台 Cookie *</label>
-                        <input type="text" name="cookie" placeholder="X.com 至少包含 auth_token；哔哩哔哩至少包含 SESSDATA" required>
+                        <label id="cookie-label">平台 Cookie *</label>
+                        <input type="text" name="cookie" id="cookie-input" placeholder="X.com 至少包含 auth_token；哔哩哔哩至少包含 SESSDATA" required>
                     </div>
                     <div class="form-group" style="grid-column: 1 / -1;">
                         <label>昵称（可选）</label>
@@ -90,8 +91,24 @@
         </div>
         
         <div class="card" style="background:#fffbe6;border:1px solid #ffe58f;">
-            <strong>Cookie 使用说明：</strong> 当前版本支持 `X.com` 和 `哔哩哔哩`。X.com Cookie 至少需要 `auth_token`，哔哩哔哩 Cookie 至少需要 `SESSDATA`。添加后点击「验证 Cookie」。
+            <strong>Cookie 使用说明：</strong> 当前版本支持 `X.com`、`哔哩哔哩` 和 `Telegram Bot`。X.com Cookie 至少需要 `auth_token`，哔哩哔哩 Cookie 至少需要 `SESSDATA`，Telegram 需要 Bot Token。添加后点击「验证 Cookie」。
         </div>
+        <script>
+            document.querySelector('select[name="platform"]').addEventListener('change', function() {
+                const cookieInput = document.getElementById('cookie-input');
+                const cookieLabel = document.getElementById('cookie-label');
+                if (this.value === 'telegram') {
+                    cookieInput.placeholder = 'Telegram Bot Token，例如 123456789:ABCdefGHIjklMNOpqrsTUVwxyz';
+                    cookieLabel.textContent = 'Bot Token *';
+                } else if (this.value === 'bilibili') {
+                    cookieInput.placeholder = '哔哩哔哩至少包含 SESSDATA';
+                    cookieLabel.textContent = '平台 Cookie *';
+                } else {
+                    cookieInput.placeholder = 'X.com 至少包含 auth_token';
+                    cookieLabel.textContent = '平台 Cookie *';
+                }
+            });
+        </script>
         
         <div class="card">
             <h2>账号列表</h2>
@@ -111,7 +128,7 @@
                     {% for account in accounts %}
                     <tr>
                         <td>{{ account.phone }}</td>
-                        <td>{{ 'X.com' if account.platform == 'x' else '哔哩哔哩' }}</td>
+                        <td>{{ 'X.com' if account.platform == 'x' else ('Telegram Bot' if account.platform == 'telegram' else '哔哩哔哩') }}</td>
                         <td>{{ account.nickname or '-' }}</td>
                         <td>
                             {% if account.status == 'online' %}

@@ -61,6 +61,7 @@
             <a href="/comments">回复任务</a>
             <a href="/products">产品管理</a>
             <a href="/stats">数据统计</a>
+            <a href="/telegram">Telegram 营销</a>
         </nav>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -120,7 +121,7 @@
         <div class="card">
             <h2>X.com / 哔哩哔哩 一键工作流</h2>
             <p style="color:#666;font-size:13px;margin-bottom:12px;">
-                输入一个关键词后，系统会同时调用 X.com 和哔哩哔哩的在线账号并行执行“先搜索，再批量评论”。如果某个平台没有在线账号，会自动跳过。
+                输入一个关键词后，系统会先自动清空 X.com 和哔哩哔哩的全部已保存帖子，再同时调用两个平台的在线账号并行执行“先搜索，再批量评论”。如果某个平台没有在线账号，会自动跳过。
             </p>
             <form method="post" action="/workflow/run">
                 <div class="form-row">
