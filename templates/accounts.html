@@ -101,6 +101,9 @@
                 if (this.value === 'bilibili') {
                     cookieInput.placeholder = '哔哩哔哩至少包含 SESSDATA';
                     cookieLabel.textContent = '平台 Cookie *';
+                } else if (this.value === 'linkedin') {
+                    cookieInput.placeholder = '领英 Cookie';
+                    cookieLabel.textContent = '平台 Cookie *';
                 } else {
                     cookieInput.placeholder = 'X.com 至少包含 auth_token';
                     cookieLabel.textContent = '平台 Cookie *';
