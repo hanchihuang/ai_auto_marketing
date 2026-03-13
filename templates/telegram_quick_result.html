@@ -39,6 +39,7 @@
         .badge-success { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
         .badge-danger { background: #fff2f0; color: #ff4d4f; border: 1px solid #ffccc7; }
         .badge-warning { background: #fffbe6; color: #fa8c16; border: 1px solid #ffe58f; }
+        .badge-info { background: #e6f7ff; color: #1890ff; border: 1px solid #91d5ff; }
 
         .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; cursor: pointer; border: none; font-weight: 500; }
         .btn-primary { background: #229ED9; color: white; }
@@ -54,8 +55,7 @@
     <div class="container">
         <nav class="nav">
             <a href="/">控制台</a>
-            <a href="/telegram/quick">返回一键群发</a>
-            <a href="/telegram">Telegram 营销</a>
+            <a href="/wechat">返回微信爬虫</a>
         </nav>
 
         <div class="card">
@@ -70,6 +70,10 @@
                     <div class="stat-item">
                         <div class="number failed">{{ failed_count }}</div>
                         <div class="label">失败</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="number pending">{{ skipped_blacklist or 0 }}</div>
+                        <div class="label">黑名单跳过</div>
                     </div>
                     <div class="stat-item">
                         <div class="number">{{ results|length }}</div>
@@ -89,6 +93,7 @@
                     <tr>
                         <th>#</th>
                         <th>Chat ID</th>
+                        <th>群组名称</th>
                         <th>状态</th>
                         <th>备注</th>
                     </tr>
@@ -98,16 +103,21 @@
                     <tr>
                         <td>{{ loop.index }}</td>
                         <td><code>{{ result.chat_id }}</code></td>
+                        <td>{{ result.group_title or '-' }}</td>
                         <td>
                             {% if result.status == 'success' %}
                             <span class="badge badge-success">成功</span>
                             {% elif result.status == 'pending' %}
                             <span class="badge badge-warning">待发送</span>
+                            {% elif result.status == 'skipped' %}
+                            <span class="badge badge-danger">已跳过</span>
+                            {% elif result.status == 'unknown' %}
+                            <span class="badge badge-info">未知</span>
                             {% else %}
                             <span class="badge badge-danger">失败</span>
                             {% endif %}
                         </td>
-                        <td>{{ result.error or result.message or '-' }}</td>
+                        <td>{{ result.reason or result.error or result.message or '-' }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>

@@ -51,8 +51,7 @@
             <a href="/comments">回复任务</a>
             <a href="/products">产品管理</a>
             <a href="/stats">数据统计</a>
-            <a href="/telegram">Telegram 营销</a>
-            <a href="/telegram/quick" class="active">一键群发</a>
+            <a href="/wechat" class="active">微信爬虫</a>
         </nav>
 
         <div class="card">
@@ -63,7 +62,8 @@
                 <p>
                     1. Bot Token 格式：<code>123456789:ABCdefGHIjklMNOpqrsTUVwxyz</code><br>
                     2. Chat ID 格式：<code>-1001234567890</code>（负数格式，每行一个）<br>
-                    3. 建议先使用"试运行模式"测试，确认无误后再正式发送
+                    3. 建议先使用"试运行模式"测试，确认无误后再正式发送<br>
+                    4. <strong style="color:#ff4d4f;">安全提示：群组标题包含 {{ blacklist_keywords|join('、') }} 的群组将被自动跳过，不会发送</strong>
                 </p>
             </div>
 

@@ -134,6 +134,49 @@ class TelegramBot:
         except Exception:
             return []
 
+    def get_my_chats(self, timeout: int = 10) -> list[dict]:
+        """
+        获取 Bot 加入的群组列表
+        通过 getUpdates 监听消息，从消息中提取群组信息
+        注意：需要先在群组中发送消息，机器人才能感知到群组
+        """
+        if not self.token:
+            return []
+
+        updates = self.get_updates(timeout=timeout)
+        chats = {}
+
+        for update in updates:
+            # 从 message 中获取群组信息
+            message = update.get("message", {})
+            chat = message.get("chat", {})
+
+            chat_id = chat.get("id")
+            if chat_id and chat.get("type") in ["group", "supergroup"]:
+                if chat_id not in chats:
+                    chats[chat_id] = {
+                        "chat_id": chat_id,
+                        "title": chat.get("title", "未知"),
+                        "username": chat.get("username"),
+                        "type": chat.get("type"),
+                    }
+
+            # 从 my_chat_member 也能获取群组信息
+            my_chat_member = update.get("my_chat_member", {})
+            if my_chat_member:
+                chat = my_chat_member.get("chat", {})
+                chat_id = chat.get("id")
+                if chat_id and chat.get("type") in ["group", "supergroup"]:
+                    if chat_id not in chats:
+                        chats[chat_id] = {
+                            "chat_id": chat_id,
+                            "title": chat.get("title", "未知"),
+                            "username": chat.get("username"),
+                            "type": chat.get("type"),
+                        }
+
+        return list(chats.values())
+
     def get_chat(self, chat_id: int) -> dict | None:
         """获取群组信息"""
         if not self.token:
@@ -219,7 +262,7 @@ class TelegramBot:
         返回匹配关键词且不在黑名单中的群组
         """
         if blacklist_keywords is None:
-            blacklist_keywords = ["sober", "戒酒", "戒毒", "康复"]
+            blacklist_keywords = ["sober", "greek", "Greek", "格致", "戒酒", "戒毒", "康复"]
 
         matched_groups = []
 
@@ -253,7 +296,7 @@ class TelegramBot:
         如果群组在黑名单中，拒绝发送
         """
         if blacklist_keywords is None:
-            blacklist_keywords = ["sober", "戒酒", "戒毒", "康复"]
+            blacklist_keywords = ["sober", "greek", "Greek", "格致", "戒酒", "戒毒", "康复"]
 
         # 先获取群组信息检查是否在黑名单
         chat_info = self.get_chat(chat_id)
@@ -283,7 +326,7 @@ class TelegramBot:
         返回发送结果统计
         """
         if blacklist_keywords is None:
-            blacklist_keywords = ["sober", "戒酒", "戒毒", "康复"]
+            blacklist_keywords = ["sober", "greek", "Greek", "格致", "戒酒", "戒毒", "康复"]
 
         success_count = 0
         failed_count = 0

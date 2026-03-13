@@ -4,12 +4,18 @@
 使用 Playwright 绕过反爬虫机制
 """
 
+import io
 import re
 import time
 import urllib.parse
+import requests
 from datetime import datetime, timedelta
 from typing import Any
 
+import cv2
+import numpy as np
+from pyzbar.pyzbar import decode as decode_qrcode
+from PIL import Image
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
@@ -211,10 +217,15 @@ class SogouWechatSpider:
             page_obj = self._get_page()
 
             print(f"访问文章: {url}")
-            page_obj.goto(url, wait_until="networkidle")
+            page_obj.goto(url, wait_until="domcontentloaded")
 
             # 等待页面加载
             time.sleep(3)
+
+            # 检查并处理验证码
+            if self._handle_verification(page_obj):
+                print("已处理验证，等待内容加载...")
+                time.sleep(3)
 
             # 检查是否被反爬
             if "antispider" in page_obj.url or "captcha" in page_obj.url:
@@ -231,14 +242,62 @@ class SogouWechatSpider:
             # 获取页面源码
             html = page_obj.content()
 
-            return self._parse_article_detail(html, url)
+            return self._parse_article_detail(html, url, page_obj)
         except Exception as e:
             print(f"获取文章详情失败: {e}")
             import traceback
             traceback.print_exc()
             return None
 
-    def _parse_article_detail(self, html: str, url: str) -> dict:
+    def _handle_verification(self, page) -> bool:
+        """处理微信验证滑块"""
+        try:
+            # 检查是否有验证滑块
+            slider = page.query_selector('.reward-slider, .slider, [class*="slider"], [id*="slider"]')
+            if slider:
+                print("检测到验证滑块，尝试等待自动通过...")
+                
+                # 等待一段时间让验证自动完成（如果有的话）
+                # 或者尝试滑动
+                for attempt in range(3):
+                    time.sleep(2)
+                    
+                    # 检查滑块是否消失
+                    if not page.query_selector('.reward-slider, .slider, [class*="slider"]'):
+                        print("验证已通过")
+                        return True
+                    
+                    # 尝试拖动滑块
+                    try:
+                        slider = page.query_selector('.reward-slider, .slider, [class*="slider"], [id*="slider"]')
+                        if slider:
+                            box = slider.bounding_box()
+                            if box:
+                                # 随机拖动距离
+                                import random
+                                move_x = box['x'] + box['width'] * random.uniform(0.6, 0.9)
+                                page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                                page.mouse.down()
+                                page.mouse.move(move_x, box['y'] + box['height'] / 2, steps=10)
+                                page.mouse.up()
+                    except Exception as e:
+                        print(f"滑动尝试 {attempt + 1} 失败: {e}")
+                
+                return True
+            
+            # 检查其他验证元素
+            verify_elements = page.query_selector_all('[class*="verify"], [id*="verify"], [class*="captcha"]')
+            if verify_elements:
+                print(f"检测到验证元素 {len(verify_elements)} 个")
+                time.sleep(2)
+                return True
+                
+            return False
+        except Exception as e:
+            print(f"验证处理出错: {e}")
+            return False
+
+    def _parse_article_detail(self, html: str, url: str, page=None) -> dict:
         """解析文章详情，提取群二维码"""
         soup = BeautifulSoup(html, "html.parser")
 
@@ -269,40 +328,23 @@ class SogouWechatSpider:
         # 查找群二维码
         qr_codes = []
 
-        # 提取内容区域中的所有图片
+        # 方法1: 从内容区域提取（初步筛选 + 图像验证）
         rich_content = soup.select_one("#js_content")
         if rich_content:
-            for img in rich_content.find_all("img"):
-                src = img.get("data-src", "") or img.get("src", "")
-                alt = img.get("alt", "")
+            qr_codes.extend(self._extract_qr_codes_from_element(rich_content))
 
-                if not src or src.startswith("data:"):
-                    continue
+        # 方法2: 从整个页面提取（处理懒加载）
+        if not qr_codes:
+            qr_codes.extend(self._extract_qr_codes_from_element(soup))
 
-                src_lower = src.lower()
-                is_qr = False
-                qr_type = "content_img"
+        # 方法3: 使用Playwright截图识别（如果有page对象）
+        if not qr_codes and page:
+            qr_codes.extend(self._extract_qr_codes_from_page(page))
 
-                if any(x in src_lower for x in ["qrcode", "qrimage", "mmqrcode", "wxqrcode"]):
-                    is_qr = True
-                    qr_type = "qrcode_url"
-                elif "群" in alt or "二维码" in alt:
-                    is_qr = True
-                    qr_type = "group_alt"
-                else:
-                    parent = img.parent
-                    if parent:
-                        parent_text = parent.get_text(strip=True).lower()
-                        if "群" in parent_text or "二维码" in parent_text:
-                            is_qr = True
-                            qr_type = "parent_text"
-
-                if is_qr:
-                    qr_codes.append({
-                        "type": qr_type,
-                        "src": src,
-                        "alt": alt,
-                    })
+        # 方法4: 兜底 - 如果以上方法都没找到，遍历所有图片进行图像验证
+        # 这可以找到URL没有明显特征但实际是二维码的图片
+        if not qr_codes and page:
+            qr_codes.extend(self._verify_all_images(page))
 
         # 获取文章内容摘要
         content = ""
@@ -317,6 +359,214 @@ class SogouWechatSpider:
             "content": content,
             "qr_codes": qr_codes,
         }
+
+    def _is_valid_qr_code(self, image_url: str) -> bool:
+        """下载图片并验证是否为有效的二维码"""
+        try:
+            # 使用 requests 下载图片，设置超时和 headers
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+                "Referer": "https://mp.weixin.qq.com/",
+            }
+            response = requests.get(image_url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                return False
+
+            # 将图片转换为 OpenCV 格式
+            image_bytes = io.BytesIO(response.content)
+            image = Image.open(image_bytes).convert("RGB")
+            image_np = np.array(image)
+
+            # 转换为灰度图进行二维码识别
+            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+
+            # 使用 pyzbar 识别二维码
+            decoded_objects = decode_qrcode(gray)
+
+            if decoded_objects:
+                # 检查识别的内容是否有效（二维码）
+                for obj in decoded_objects:
+                    # 微信群二维码通常包含特定关键词
+                    data = obj.data.decode("utf-8", errors="ignore")
+                    # 群二维码可能是 URL 或文本
+                    if data and len(data) > 0:
+                        return True
+
+            return False
+        except Exception as e:
+            # 如果识别失败，保守起见返回 False
+            return False
+
+    def _extract_qr_codes_from_element(self, element) -> list:
+        """从HTML元素中提取二维码"""
+        qr_codes = []
+        
+        for img in element.find_all("img"):
+            # 优先使用 data-src（懒加载）
+            src = img.get("data-src", "") or img.get("src", "")
+            alt = img.get("alt", "")
+            
+            if not src or src.startswith("data:"):
+                continue
+
+            # 跳过文章页 URL（非图片），微信有时会把当前页 URL 填进 img
+            if "weixin.qq.com/s?" in src or "mp.weixin.qq.com/s?" in src:
+                continue
+
+            src_lower = src.lower()
+            is_qr = False
+            qr_type = "content_img"
+
+            # 检查URL/文件名是否包含二维码关键词
+            qr_keywords = ["qrcode", "qrimage", "mmqrcode", "wxqrcode", "qr-image", "qr_code", "qr-code"]
+            if any(x in src_lower for x in qr_keywords):
+                is_qr = True
+                qr_type = "qrcode_url"
+            # 检查alt文本
+            elif "群" in alt or "二维码" in alt or "群二维码" in alt:
+                is_qr = True
+                qr_type = "group_alt"
+            else:
+                # 检查父元素文本
+                parent = img.parent
+                if parent:
+                    parent_text = parent.get_text(strip=True)
+                    if "群" in parent_text or "二维码" in parent_text or "加微信" in parent_text:
+                        is_qr = True
+                        qr_type = "parent_text"
+
+            # 额外检查：图片尺寸通常是正方形（二维码特征）
+            style = img.get("style", "")
+            if not is_qr and style:
+                # 如果样式中有 width/height 且接近正方形，可能是二维码
+                import re
+                width_match = re.search(r'width:\s*(\d+)px', style)
+                height_match = re.search(r'height:\s*(\d+)px', style)
+                if width_match and height_match:
+                    w, h = int(width_match.group(1)), int(height_match.group(1))
+                    if w > 50 and h > 50 and abs(w - h) < 20:
+                        # 正方形图片，可能是二维码
+                        is_qr = True
+                        qr_type = "square_img"
+
+            # 只有初步判断为二维码的图片才进行真正的图像验证
+            if is_qr:
+                # 下载图片并验证是否为真正的二维码
+                if self._is_valid_qr_code(src):
+                    qr_codes.append({
+                        "type": qr_type + "_verified",
+                        "src": src,
+                        "alt": alt,
+                    })
+                    print(f"验证通过二维码: type={qr_type}, src={src[:60]}...")
+                else:
+                    print(f"图片非二维码（图像识别验证失败）: src={src[:60]}...")
+
+        return qr_codes
+
+    def _extract_qr_codes_from_page(self, page) -> list:
+        """从Playwright页面对象提取二维码（处理动态加载）"""
+        qr_codes = []
+        
+        try:
+            # 使用JavaScript查找所有图片元素，优先取真实图片地址（data-src）
+            images = page.evaluate('''
+                () => {
+                    const images = [];
+                    document.querySelectorAll('img').forEach(img => {
+                        // 优先 data-src / data-original（懒加载真实图），避免用成文章页 URL
+                        let src = (img.dataset.src || img.dataset.original || img.src || '').trim();
+                        const alt = img.alt || '';
+                        
+                        // 跳过文章链接（非图片）
+                        if (src.indexOf('weixin.qq.com/s?') !== -1 || src.indexOf('mp.weixin.qq.com/s?') !== -1) return;
+                        if (!src || src.startsWith('data:')) return;
+                        
+                        let isQr = false;
+                        let type = 'page_img';
+                        
+                        const srcLower = src.toLowerCase();
+                        if (srcLower.includes('qrcode') || srcLower.includes('mmqrcode') || 
+                            srcLower.includes('wxqrcode') || srcLower.includes('qr_image') ||
+                            srcLower.includes('mmbiz.qpic.cn') || srcLower.includes('wx.qlogo.cn')) {
+                            isQr = true;
+                            type = 'qrcode_url';
+                        } else if (alt.includes('群') || alt.includes('二维码')) {
+                            isQr = true;
+                            type = 'group_alt';
+                        }
+                        
+                        // 检查父元素
+                        if (!isQr && img.parentElement) {
+                            const parentText = img.parentElement.innerText || '';
+                            if (parentText.includes('群') || parentText.includes('二维码') || parentText.includes('加微信')) {
+                                isQr = true;
+                                type = 'parent_text';
+                            }
+                        }
+                        
+                        images.push({src, alt, type, isQr});
+                    });
+                    return images;
+                }
+            ''')
+            
+            for img in images:
+                if img.get("isQr") or img.get("type") in ["qrcode_url", "group_alt", "parent_text"]:
+                    src = img.get("src", "")
+                    # 下载图片并验证是否为真正的二维码
+                    if self._is_valid_qr_code(src):
+                        qr_codes.append({
+                            "type": img.get("type", "page_detected") + "_verified",
+                            "src": src,
+                            "alt": img.get("alt", ""),
+                        })
+                        print(f"JS检测到二维码（已验证）: {img.get('type')}, src={img.get('src', '')[:60]}...")
+                    else:
+                        print(f"JS检测图片非二维码（验证失败）: src={src[:60]}...")
+                    
+        except Exception as e:
+            print(f"JS二维码检测失败: {e}")
+
+        return qr_codes
+
+    def _verify_all_images(self, page) -> list:
+        """兜底方法：遍历所有图片进行图像验证"""
+        qr_codes = []
+
+        try:
+            # 使用JavaScript获取所有图片
+            images = page.evaluate('''
+                () => {
+                    const images = [];
+                    document.querySelectorAll('img').forEach(img => {
+                        let src = (img.dataset.src || img.dataset.original || img.src || '').trim();
+                        if (src.indexOf('weixin.qq.com/s?') !== -1 || src.indexOf('mp.weixin.qq.com/s?') !== -1) return;
+                        if (!src || src.startsWith('data:')) return;
+                        // 跳过微信头像
+                        if (src.includes('wx.qlogo.cn') && !src.toLowerCase().includes('qr')) return;
+                        images.push({src, alt: img.alt || ''});
+                    });
+                    return images;
+                }
+            ''')
+
+            print(f"兜底检测：遍历 {len(images)} 张图片进行二维码验证...")
+
+            for img in images:
+                src = img.get("src", "")
+                if self._is_valid_qr_code(src):
+                    qr_codes.append({
+                        "type": "full_scan_verified",
+                        "src": src,
+                        "alt": img.get("alt", ""),
+                    })
+                    print(f"兜底检测找到二维码: src={src[:60]}...")
+
+        except Exception as e:
+            print(f"兜底二维码检测失败: {e}")
+
+        return qr_codes
 
     def batch_search(
         self,

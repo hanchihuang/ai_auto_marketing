@@ -96,7 +96,7 @@
                 <div class="form-row">
                     <div class="form-group" style="flex: 2;">
                         <label>搜索关键词（多个用逗号分隔）</label>
-                        <input type="text" name="keywords" placeholder="例如: 量化, AI, 人工智能, 机器学习" value="量化, AI">
+                        <input type="text" name="keywords" placeholder="例如: openclaw 扫码群, 微信群, AI" value="openclaw 扫码群">
                     </div>
                     <div class="form-group">
                         <label>时间范围（天）</label>
@@ -121,7 +121,7 @@
             <div class="tips">
                 <h3>使用说明</h3>
                 <p>
-                    1. 输入要搜索的关键词，如"量化"、"AI"、"人工智能"等<br>
+                    1. 输入要搜索的关键词，如"openclaw 扫码群"、"微信群"、"AI"等<br>
                     2. 系统会爬取最近N天的相关文章<br>
                     3. 自动提取文章中的群二维码图片<br>
                     4. 爬取的群二维码可用于扩大自媒体渠道<br>
@@ -163,7 +163,20 @@
                             {% if article.qr_code_url %}
                             <span class="qr-available">✓ 包含群二维码</span>
                             <br>
-                            <img src="{{ article.qr_code_url }}" alt="群二维码" class="qr-code" style="margin-top: 8px;">
+                            {% if '/s?' in (article.qr_code_url or '') %}
+                            <span style="font-size: 13px; color: #666;">（点击提取二维码图片）</span>
+                            <button type="button" class="btn btn-primary btn-sm" style="margin-top: 6px; display: inline-block;"
+                                    onclick="fetchQrCode({{ article.id }}, '{{ article.qr_code_url }}', this)">
+                                提取二维码
+                            </button>
+                            <span id="qr-status-{{ article.id }}" style="display:none;"></span>
+                            {% elif article.qr_code_url.startswith('http') and ('mmbiz.qpic.cn' in article.qr_code_url or 'wx.qlogo.cn' in article.qr_code_url) %}
+                            <img src="/wechat/qr_image?url={{ article.qr_code_url | urlencode }}" alt="群二维码" class="qr-code" style="margin-top: 8px; max-width: 160px; height: auto;" referrerpolicy="no-referrer" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';">
+                            <span style="display:none;">图片加载失败，<a href="{{ article.qr_code_url }}" target="_blank" rel="noopener">点击查看</a></span>
+                            {% else %}
+                            <img src="{{ article.qr_code_url }}" alt="群二维码" class="qr-code" style="margin-top: 8px; max-width: 160px; height: auto;" referrerpolicy="no-referrer" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';">
+                            <span style="display:none;">图片加载失败，<a href="{{ article.qr_code_url }}" target="_blank" rel="noopener">点击查看</a></span>
+                            {% endif %}
                             {% else %}
                             <span class="qr-none">✗ 无二维码</span>
                             {% endif %}
@@ -257,6 +270,73 @@
                 }
             });
     });
+
+    // 提取文章二维码
+    async function fetchQrCode(articleId, articleUrl, btn) {
+        const statusEl = document.getElementById('qr-status-' + articleId);
+        btn.disabled = true;
+        btn.textContent = '提取中...';
+        statusEl.style.display = 'inline';
+        statusEl.textContent = '正在提取...';
+
+        try {
+            const formData = new FormData();
+            formData.append('url', articleUrl);
+
+            const resp = await fetch('/wechat/fetch_qr', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+
+            if (data.success) {
+                // 提取成功，更新页面显示二维码，并保存到数据库
+                const qrUrl = data.qr_url;
+                const container = btn.parentElement;
+
+                // 创建图片元素
+                const img = document.createElement('img');
+                img.src = '/wechat/qr_image?url=' + encodeURIComponent(qrUrl);
+                img.alt = '群二维码';
+                img.className = 'qr-code';
+                img.style = 'margin-top: 8px; max-width: 160px; height: auto;';
+                img.referrerPolicy = 'no-referrer';
+                img.onerror = function() {
+                    this.style.display = 'none';
+                    this.nextElementSibling.style.display = 'inline';
+                };
+
+                const errorSpan = document.createElement('span');
+                errorSpan.style.display = 'none';
+                errorSpan.innerHTML = '图片加载失败，<a href="' + qrUrl + '" target="_blank" rel="noopener">点击查看</a>';
+
+                // 移除按钮和状态，添加图片
+                btn.style.display = 'none';
+                statusEl.style.display = 'none';
+                container.querySelector('span').style.display = 'none'; // 隐藏"点击提取"
+                container.appendChild(img);
+                container.appendChild(errorSpan);
+
+                // 保存到数据库
+                try {
+                    await fetch('/wechat/update_qr', {
+                        method: 'POST',
+                        body: new FormData().append('article_id', articleId).append('qr_url', qrUrl)
+                    });
+                } catch(e) {
+                    console.log('保存QR URL失败:', e);
+                }
+            } else {
+                statusEl.textContent = '提取失败: ' + (data.error || '未知错误');
+                btn.disabled = false;
+                btn.textContent = '重试';
+            }
+        } catch (e) {
+            statusEl.textContent = '提取失败: ' + e.message;
+            btn.disabled = false;
+            btn.textContent = '重试';
+        }
+    }
     </script>
 </body>
 </html>

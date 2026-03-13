@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import threading
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from datetime import datetime
@@ -1617,6 +1618,102 @@ def wechat_page():
 def wechat_progress():
     """获取爬取进度"""
     return jsonify(crawl_progress)
+
+
+@app.get("/wechat/qr_image")
+def wechat_qr_image():
+    """代理微信二维码图片，解决防盗链无法显示"""
+    from urllib.parse import unquote
+    from flask import Response
+
+    url = request.args.get("url", "")
+    if not url:
+        abort(404)
+    url = unquote(url)
+
+    # 只允许代理微信图片 CDN，禁止文章页 URL
+    if "/s?" in url:
+        abort(403)
+    if "wx.qlogo.cn" not in url and "mmbiz.qpic.cn" not in url:
+        abort(403)
+
+
+@app.post("/wechat/fetch_qr")
+def wechat_fetch_qr():
+    """从文章链接中提取二维码图片"""
+    from urllib.parse import unquote
+
+    article_url = request.form.get("url", "")
+    if not article_url:
+        return jsonify({"success": False, "error": "缺少 URL"})
+
+    article_url = unquote(article_url)
+    print(f"提取文章二维码: {article_url[:80]}...")
+
+    try:
+        # 使用爬虫访问文章并获取二维码
+        spider = SogouWechatSpider()
+        detail = spider.get_article_detail(article_url)
+        spider.close()
+
+        if not detail:
+            return jsonify({"success": False, "error": "获取文章失败"})
+
+        qr_codes = detail.get("qr_codes", [])
+        if qr_codes:
+            # 返回第一个二维码的真实图片 URL
+            qr_url = qr_codes[0].get("src", "")
+            # 优先返回图片 CDN URL
+            for qr in qr_codes:
+                src = qr.get("src", "")
+                if "mmbiz.qpic.cn" in src or "wx.qlogo.cn" in src:
+                    qr_url = src
+                    break
+            return jsonify({"success": True, "qr_url": qr_url})
+        else:
+            return jsonify({"success": False, "error": "文章中未找到二维码"})
+
+    except Exception as e:
+        app.logger.error(f"fetch_qr failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.post("/wechat/update_qr")
+def wechat_update_qr():
+    """更新文章的二维码URL"""
+    article_id = request.form.get("article_id", type=int)
+    qr_url = request.form.get("qr_url", "")
+
+    if not article_id or not qr_url:
+        return jsonify({"success": False, "error": "缺少参数"})
+
+    try:
+        storage.db.execute(
+            "UPDATE wechat_articles SET qr_code_url = ? WHERE id = ?",
+            (qr_url, article_id)
+        )
+        storage.db.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://mp.weixin.qq.com/",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content_type = resp.headers.get("Content-Type", "image/png")
+            data = resp.read()
+        return Response(data, mimetype=content_type)
+    except Exception as e:
+        app.logger.warning(f"qr_image proxy failed: {e}")
+        abort(502)
 
 
 @app.post("/wechat/crawl")
