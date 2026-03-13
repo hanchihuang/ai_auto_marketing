@@ -172,18 +172,27 @@ class SogouWechatSpider:
             # 获取页面源码
             html = page_obj.content()
 
-            return self._parse_search_results(html, keyword)
+            return self._parse_search_results(html, keyword, days)
         except Exception as e:
             print(f"搜索失败: {e}")
             import traceback
             traceback.print_exc()
             return []
 
-    def _parse_search_results(self, html: str, keyword: str) -> list[dict]:
-        """解析搜索结果"""
+    def _parse_search_results(self, html: str, keyword: str, days: int = 7) -> list[dict]:
+        """解析搜索结果
+        
+        Args:
+            html: 页面HTML
+            keyword: 搜索关键词
+            days: 过滤最近几天的文章
+        """
         articles = []
         soup = BeautifulSoup(html, "html.parser")
 
+        # 计算截止日期
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
         # 使用正确的选择器
         items = soup.select("ul.news-list li")
 
@@ -217,6 +226,12 @@ class SogouWechatSpider:
                 time_elem = item.select_one(".s3")
                 pub_time = time_elem.get_text(strip=True) if time_elem else source  # 使用 source 作为时间
 
+                # 解析文章日期并过滤
+                article_date = self._parse_article_date(pub_time)
+                if article_date and article_date < cutoff_date:
+                    # 文章超过指定天数，跳过
+                    continue
+
                 # 获取摘要
                 abstract_elem = item.select_one("p.txt-info")
                 abstract = abstract_elem.get_text(strip=True) if abstract_elem else ""
@@ -234,6 +249,70 @@ class SogouWechatSpider:
                 continue
 
         return articles
+
+    def _parse_article_date(self, date_str: str) -> datetime | None:
+        """解析文章日期字符串
+        
+        支持格式:
+        - 2024年1月15日
+        - 1月15日
+        - 3小时前
+        - 刚刚
+        - 今天
+        - 昨天
+        """
+        if not date_str:
+            return None
+            
+        date_str = date_str.strip()
+        now = datetime.now()
+        
+        try:
+            # 完整日期格式: 2024年1月15日
+            match = re.match(r'(\d{4})年(\d{1,2})月(\d{1,2})日', date_str)
+            if match:
+                year, month, day = map(int, match.groups())
+                return datetime(year, month, day)
+            
+            # 月日格式: 1月15日 (需要判断是今年还是去年)
+            match = re.match(r'(\d{1,2})月(\d{1,2})日', date_str)
+            if match:
+                month, day = map(int, match.groups())
+                # 如果解析出的日期在未来，则认为是去年
+                year = now.year
+                parsed = datetime(year, month, day)
+                if parsed > now:
+                    parsed = datetime(year - 1, month, day)
+                return parsed
+            
+            # 今天
+            if '今天' in date_str:
+                return now
+            
+            # 昨天
+            if '昨天' in date_str:
+                return now - timedelta(days=1)
+            
+            # N小时前
+            match = re.search(r'(\d+)\s*小时前', date_str)
+            if match:
+                hours = int(match.group(1))
+                return now - timedelta(hours=hours)
+            
+            # N分钟前
+            match = re.search(r'(\d+)\s*分钟前', date_str)
+            if match:
+                minutes = int(match.group(1))
+                return now - timedelta(minutes=minutes)
+            
+            # 刚刚
+            if '刚刚' in date_str:
+                return now
+                
+        except Exception as e:
+            print(f"日期解析失败: {date_str}, {e}")
+            
+        return None
 
     def get_article_detail(self, url: str) -> dict | None:
         """获取文章详情，包括群二维码"""
