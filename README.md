@@ -6,7 +6,6 @@
 
 - `X.com`
 - `哔哩哔哩`
-- `Telegram` 群组营销
 - `微信` 公众号文章爬虫（新增）
 
 适合想快速验证这类流程的人：
@@ -41,9 +40,6 @@
 - `微信公众号文章爬虫` ⭐NEW
   使用 Playwright 绕过反爬机制，批量爬取微信文章，智能提取群二维码（多重验证 + 图像识别），支持关键词搜索、分页和实时进度显示
 
-- `Telegram 群组营销`
-  批量搜索 Telegram 群组、自动发送营销消息、黑名单过滤（自动跳过 Sober/戒酒/greek 等关键词群组）、支持获取 Bot 已加入群组列表
-
 - `内容搜索`
   按关键词抓取平台内容，保留标题、链接、点赞、评论等指标
 
@@ -69,7 +65,6 @@
 
 - `控制台`
 - `账号管理`
-- `Telegram 营销`
 - `微信爬虫` ⭐NEW
 - `内容搜索`
 - `回复任务`
@@ -89,10 +84,9 @@
 - `storage.py`：SQLite 存储层
 - `xiaohongshu.py`：X.com 自动化逻辑
 - `bilibili_bot.py`：哔哩哔哩自动化逻辑
-- `telegram_bot.py`：Telegram 群组营销机器人
 - `sogou_wechat_spider.py`：搜狗微信文章爬虫（Playwright 驱动）
 - `templates/`：页面模板
-- `data/marketing.db`：本地数据库
+- `marketing.db`：本地数据库
 
 ## 快速开始
 
@@ -132,44 +126,6 @@ http://127.0.0.1:5055
 - `哔哩哔哩` 账号 Cookie 至少需要 `SESSDATA`
 
 添加后可直接点击"验证 Cookie"。
-
-### 2. 配置 Telegram Bot（可选）
-
-进入 `/telegram`：
-
-1. **创建 Bot**：在 Telegram 搜索 `@BotFather`，发送 `/newbot` 创建机器人
-2. **获取 Token**：创建成功后会收到 Bot Token，格式如 `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`
-3. **填写 Token**：在页面输入 Token，点击"验证 Cookie"
-
-**验证结果说明**：
-
-| 状态 | 说明 |
-|------|------|
-| 成功 | 显示 Bot 名称（如 `hhchhchhcbot`），表示连接正常 |
-| 失败 | 显示错误信息，常见原因：<br>- `SOCKSHTTPSConnectionPool...SSL: UNEXPECTED_EOF` → 代理端口错误<br>- `Max retries exceeded` → 网络问题或代理不可用<br>- `Connection refused` → 代理未启动或端口错误 |
-
-**代理配置**：
-
-代码会按以下优先级自动检测代理：
-
-1. **环境变量**（最高优先级）：`HTTP_PROXY`、`HTTPS_PROXY`、`http_proxy`、`https_proxy`
-2. **自动检测**：依次尝试本地常用端口 7897, 7890, 1080, 8080
-
-如果验证失败，可以手动设置环境变量：
-
-```bash
-# 手动指定代理端口
-export HTTP_PROXY=http://127.0.0.1:7897
-export HTTPS_PROXY=http://127.0.0.1:7897
-python app.py
-```
-
-**重试策略**：
-
-代码内置了自动重试机制来处理临时网络问题：
-- 最多重试 3 次
-- 重试间隔递增（1秒、2秒、3秒）
-- 针对 429、500、502、503、504 状态码自动重试
 
 ### 3. 配置产品
 
@@ -216,15 +172,6 @@ python app.py
 - 两个平台并行执行"先搜索，再批量评论"
 - 某个平台没有在线账号时自动跳过
 
-### 6. Telegram 群组营销
-
-进入 `/telegram`：
-
-1. **搜索群组**：输入关键词搜索 Telegram 群组
-2. **发送营销**：选择产品、设置营销内容，批量发送到群组
-3. **黑名单过滤**：系统会自动跳过群组名称含有 `sober`、`greek`、`格致`、`戒酒`、`戒毒`、`康复` 等关键词的群组
-4. **我的群组**：查看 Bot 已加入的群组列表
-
 ## 当前定位
 
 这是一个"可运行、可改造、可继续扩展"的自动化营销原型，不是承诺稳定成功率的生产系统。
@@ -242,7 +189,7 @@ python app.py
 默认使用本地 SQLite：
 
 ```text
-data/marketing.db
+marketing.db
 ```
 
 已支持按平台隔离：
