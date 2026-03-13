@@ -19,6 +19,7 @@ from storage import Storage
 from bilibili_bot import BilibiliBot
 from xiaohongshu import XiaohongshuBot, CommentGenerator, CommentStrategy, Product
 from sogou_wechat_spider import SogouWechatSpider
+from linkedin_bot import LinkedInBot
 from tardis_marketing import (
     TardisCommentGenerator,
     TardisCommentStrategy,
@@ -58,6 +59,7 @@ running_tasks = {}
 PLATFORM_LABELS = {
     "x": "X.com",
     "bilibili": "哔哩哔哩",
+    "linkedin": "领英",
 }
 
 
@@ -114,6 +116,8 @@ def get_default_account_by_platform(accounts: list[dict], platform: str) -> dict
 def get_bot_for_platform(platform: str):
     if platform == "bilibili":
         return BilibiliBot()
+    elif platform == "linkedin":
+        return LinkedInBot()
     return XiaohongshuBot()
 
 
@@ -648,21 +652,22 @@ def run_workflow():
     accounts = storage.list_xhs_accounts()
     workflow_accounts = {
         platform: get_default_account_by_platform(accounts, platform)
-        for platform in ["x", "bilibili"]
+        for platform in ["x", "bilibili", "linkedin"]
     }
     available_accounts = {platform: account for platform, account in workflow_accounts.items() if account}
     if not available_accounts:
-        flash("未找到可用的在线账号，请至少保持一个 X.com 或哔哩哔哩账号在线", "error")
+        flash("未找到可用的在线账号，请至少保持一个 X.com、哔哩哔哩或领英账号在线", "error")
         return redirect(url_for("search_page", keyword=keyword))
 
     cleared_counts = {}
-    for platform in ["x", "bilibili"]:
+    for platform in ["x", "bilibili", "linkedin"]:
         cleared_counts[platform] = storage.clear_xhs_hot_posts(platform)
     flash(
         (
             f"执行前已自动清空历史帖子："
             f"X.com {cleared_counts.get('x', 0)} 条，"
-            f"哔哩哔哩 {cleared_counts.get('bilibili', 0)} 条"
+            f"哔哩哔哩 {cleared_counts.get('bilibili', 0)} 条，"
+            f"领英 {cleared_counts.get('linkedin', 0)} 条"
         ),
         "warning",
     )

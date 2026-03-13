@@ -111,6 +111,11 @@
                     <input type="hidden" name="platform" value="bilibili">
                     <button type="submit" class="btn btn-danger">一键清空所有哔哩哔哩已保存帖子</button>
                 </form>
+                <form method="post" action="/search/hot-posts/clear" onsubmit="return confirm('确认清空所有已保存的领英帖子吗？');">
+                    <input type="hidden" name="account_id" value="{{ account_id or '' }}">
+                    <input type="hidden" name="platform" value="linkedin">
+                    <button type="submit" class="btn btn-danger">一键清空所有领英已保存帖子</button>
+                </form>
                 <form method="post" action="/search/hot-posts/clear" onsubmit="return confirm('确认清空 X.com 和哔哩哔哩全部已保存帖子吗？');">
                     <input type="hidden" name="account_id" value="{{ account_id or '' }}">
                     <button type="submit" class="btn btn-danger">一键清空全部已保存帖子</button>

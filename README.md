@@ -15,13 +15,14 @@
 
 - `X.com`
 - `哔哩哔哩`
-- `微信` 公众号文章爬虫（新增）
+- `领英` ⭐NEW
+- `微信` 公众号文章爬虫
 
 适合想快速验证这类流程的人：
 
 - 多账号 Cookie 登录管理
 - 关键词搜内容
-- 同一关键词并行搜索 `X.com` 和 `哔哩哔哩`
+- 同一关键词并行搜索 `X.com`、`哔哩哔哩` 和 `领英`
 - 基于产品信息自动生成营销文案
 - 批量回复/评论
 - 一键执行"先搜索再评论"的双平台工作流
@@ -118,9 +119,11 @@
 - `storage.py`：SQLite 存储层
 - `xiaohongshu.py`：X.com 自动化逻辑
 - `bilibili_bot.py`：哔哩哔哩自动化逻辑
+- `linkedin_bot.py`：领英自动化逻辑 ⭐NEW
 - `sogou_wechat_spider.py`：搜狗微信文章爬虫（Playwright 驱动）
+- `tardis_marketing.py`：Tardis 批量营销工作流
 - `templates/`：页面模板
-- `marketing.db`：本地数据库
+- `data/`：本地数据库
 
 ## 快速开始
 
