@@ -243,6 +243,7 @@ def batch_comment_for_account(
 
     success_count = 0
     failed_count = 0
+    cd_detected = False  # 检测到评论冷却
 
     for post in web_accessible_posts[:max_comments_value]:
         # 根据产品类型使用不同的评论生成器
@@ -259,6 +260,13 @@ def batch_comment_for_account(
         success = bot.comment_post(post["post_id"], comment_text, post.get("url", ""))
         error_message = "" if success else (bot.last_error or "回复失败")
 
+        # 检测评论冷却/风控，停止批量操作
+        if not success and ("cd时间" in error_message or "不能评论" in error_message or "请稍后再试" in error_message):
+            cd_detected = True
+            print(f"[{platform_label}] 检测到评论冷却，停止批量任务")
+            # 剩余帖子不再继续评论，留到下次
+            break
+
         storage.insert_xhs_comment_task({
             "post_id": post["post_id"],
             "platform": platform,
@@ -274,6 +282,10 @@ def batch_comment_for_account(
             success_count += 1
         else:
             failed_count += 1
+
+        # 每次评论后等待一段时间，避免过快触发风控
+        if success and not cd_detected:
+            time.sleep(2)  # 成功评论后等待2秒
 
     storage.insert_xhs_stat({
         "comments_success": success_count,

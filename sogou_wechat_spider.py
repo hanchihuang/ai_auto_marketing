@@ -139,9 +139,30 @@ class SogouWechatSpider:
 
             # 如果需要翻页，使用分页链接
             if page > 1:
-                # 找到分页并点击对应页码
-                # 例如: page.click(f'a[data-page="{page}"]')
-                pass
+                # 等待分页加载
+                time.sleep(2)
+                # 尝试点击对应的页码
+                try:
+                    # 搜狗微信的分页选择器
+                    page_link = page_obj.query_selector(f'a[data-page="{page}"]')
+                    if page_link:
+                        page_link.click()
+                        time.sleep(3)
+                    else:
+                        # 尝试其他分页选择器
+                        page_link = page_obj.query_selector(f'.pc_next_{page}')
+                        if page_link:
+                            page_link.click()
+                            time.sleep(3)
+                        else:
+                            # 尝试点击下一页按钮
+                            next_btn = page_obj.query_selector('.pc_next, a:has-text("下一页")')
+                            if next_btn:
+                                for _ in range(page - 1):
+                                    next_btn.click()
+                                    time.sleep(2)
+                except Exception as e:
+                    print(f"翻页失败: {e}")
 
             # 检查是否被反爬
             if "antispider" in page_obj.url or "captcha" in page_obj.url:
@@ -180,10 +201,13 @@ class SogouWechatSpider:
                 if not link:
                     continue
 
-                # 处理搜狗重定向链接 - 需要使用完整URL才能正确重定向
+                # 处理搜狗重定向链接 - 需要添加完整 URL 前缀才能访问
                 if link.startswith("/link?url="):
                     # 构建完整的重定向URL
                     link = f"https://weixin.sogou.com{link}"
+                elif not link.startswith("http"):
+                    # 非法链接，跳过
+                    continue
 
                 # 获取来源 - 注意：source 是时间
                 source_elem = item.select_one(".s2")

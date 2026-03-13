@@ -120,7 +120,7 @@ class Storage:
                 CREATE TABLE IF NOT EXISTS wechat_articles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
-                    link TEXT NOT NULL,
+                    link TEXT NOT NULL UNIQUE,
                     source TEXT,
                     author TEXT,
                     pub_time TEXT,
@@ -850,12 +850,27 @@ class Storage:
     # ==================== 微信文章（搜狗微信爬虫） ====================
 
     def insert_wechat_article(self, payload: dict[str, Any]) -> int:
-        """保存微信文章"""
+        """保存微信文章，使用 title + keyword 组合作为唯一标识避免重复"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        title = payload.get("title", "")
+        keyword = payload.get("keyword", "")
+
+        if not title:
+            return -1
+
         with self._connect() as conn:
+            # 先检查是否已存在（用 title + keyword 组合判断）
+            existing = conn.execute(
+                "SELECT id FROM wechat_articles WHERE title = ? AND keyword = ?",
+                (title, keyword)
+            ).fetchone()
+
+            if existing:
+                return existing[0]  # 返回已存在的ID，不插入
+
             cursor = conn.execute(
                 """
-                INSERT OR IGNORE INTO wechat_articles (
+                INSERT INTO wechat_articles (
                     title, link, source, author, pub_time, abstract, keyword, content,
                     qr_code_url, qr_code_type, crawled_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
