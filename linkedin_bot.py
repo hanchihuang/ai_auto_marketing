@@ -153,19 +153,36 @@ class LinkedInBot:
 
         self.last_error = ""
         try:
-            # 使用 LinkedIn 搜索 URL
+            # 使用 LinkedIn 搜索 URL - 尝试内容搜索
             search_url = f"{self.SEARCH_URL}?keywords={quote(keyword)}&origin=GLOBAL_SEARCH_HEADER"
             self.driver.get(search_url)
-            time.sleep(3)
+            time.sleep(5)
 
             posts: list[dict[str, Any]] = []
             seen_ids: set[str] = set()
             scroll_count = 0
             max_scrolls = 10
 
+            # 多种可能的帖子选择器
+            selectors = [
+                ".feed-shared-update-v2",
+                ".scaffold-finite-scroll .scaffold-layout__main-content",
+                ".feed-shared-navigation-module",
+                "div[data-id^='urn:li:activity']",
+                ".occludable-update",
+            ]
+
             while len(posts) < limit and scroll_count < max_scrolls:
-                # 解析当前页面帖子
-                items = self.driver.find_elements(By.CSS_SELECTOR, ".feed-shared-update-v2")
+                # 尝试多种选择器
+                items = []
+                for sel in selectors:
+                    items = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    if items:
+                        break
+                
+                if not items:
+                    # 如果没找到，尝试查找任何包含内容的元素
+                    items = self.driver.find_elements(By.CSS_SELECTOR, ".feed-shared-update-v2, .occludable-update, article")
                 
                 for item in items:
                     try:
@@ -174,35 +191,44 @@ class LinkedInBot:
                             continue
                         seen_ids.add(post_id)
 
-                        # 获取标题/内容
-                        content_el = item.find_elements(By.CSS_SELECTOR, ".feed-shared-text")
-                        content = content_el[0].text if content_el else ""
+                        # 获取内容 - 多种方式
+                        content = ""
+                        for content_sel in [".feed-shared-text", ".feed-shared-update-v2__description", ".feed-shared-text-view", "span[dir='ltr']"]:
+                            content_el = item.find_elements(By.CSS_SELECTOR, content_sel)
+                            if content_el:
+                                content = content_el[0].text
+                                break
 
                         # 获取作者
-                        author_el = item.find_elements(By.CSS_SELECTOR, ".feed-shared-update-v2__author")
-                        author = author_el[0].text if author_el else "Unknown"
+                        author = "Unknown"
+                        for author_sel in [".feed-shared-update-v2__author", ".feed-shared-actor__name", ".feed-shared-actor__title"]:
+                            author_el = item.find_elements(By.CSS_SELECTOR, author_sel)
+                            if author_el:
+                                author = author_el[0].text
+                                break
 
                         # 获取链接
-                        link_el = item.find_elements(By.CSS_SELECTOR, "a[href*='/feed/']")
-                        link = link_el[0].get_attribute("href") if link_el else ""
+                        link = ""
+                        link_el = item.find_elements(By.CSS_SELECTOR, "a[href*='/feed/'], a[href*='/posts/']")
+                        if link_el:
+                            link = link_el[0].get_attribute("href")
 
                         # 获取点赞数
-                        like_el = item.find_elements(By.CSS_SELECTOR, ".social-details-social-activity .count-text")
-                        likes_str = like_el[0].text if like_el else "0"
-                        likes = self._parse_number(likes_str)
-
-                        # 获取评论数
-                        comment_el = item.find_elements(By.CSS_SELECTOR, ".comments-comment-item")
-                        comments = len(comment_el) if comment_el else 0
+                        likes = 0
+                        for like_sel in [".social-details-social-activity .count-text", ".feed-shared-social-counts__reactions", ".react-button__counter"]:
+                            like_el = item.find_elements(By.CSS_SELECTOR, like_sel)
+                            if like_el:
+                                likes = self._parse_number(like_el[0].text)
+                                break
 
                         if content or link:
                             posts.append({
                                 "post_id": post_id,
-                                "content": content[:500],
+                                "content": content[:500] if content else "无内容",
                                 "author": author,
                                 "url": link,
                                 "likes": likes,
-                                "comments": comments,
+                                "comments": 0,
                             })
 
                         if len(posts) >= limit:
@@ -215,7 +241,7 @@ class LinkedInBot:
 
                 # 滚动加载更多
                 self.driver.execute_script("window.scrollBy(0, 800);")
-                time.sleep(2)
+                time.sleep(3)
                 scroll_count += 1
 
             return posts[:limit]
