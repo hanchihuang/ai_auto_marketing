@@ -129,7 +129,12 @@
                     {% for account in accounts %}
                     <tr>
                         <td>{{ account.phone }}</td>
-                        <td>{{ 'X.com' if account.platform == 'x' else '哔哩哔哩' }}</td>
+                        <td>
+                            {% if account.platform == 'x' %}X.com
+                            {% elif account.platform == 'bilibili' %}哔哩哔哩
+                            {% elif account.platform == 'linkedin' %}领英
+                            {% else %}{{ account.platform }}{% endif %}
+                        </td>
                         <td>{{ account.nickname or '-' }}</td>
                         <td>
                             {% if account.status == 'online' %}
