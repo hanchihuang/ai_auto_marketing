@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -17,12 +18,26 @@ from storage import Storage
 from bilibili_bot import BilibiliBot
 from xiaohongshu import XiaohongshuBot, CommentGenerator, CommentStrategy, Product
 from telegram_bot import TelegramBot
+from telegram_user_client import TelegramUserClient
+from sogou_wechat_spider import SogouWechatSpider
 
 
 BASE_DIR = Path(__file__).resolve().parent
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 storage = Storage(BASE_DIR / "data" / "marketing.db")
+
+# 爬虫进度状态
+crawl_progress = {
+    "status": "idle",  # idle, running, completed, error
+    "current_keyword": "",
+    "current_page": 0,
+    "total_keywords": 0,
+    "total_pages": 0,
+    "total_articles": 0,
+    "total_qr_codes": 0,
+    "message": "",
+}
 
 # 机器人实例缓存
 bots = {}
@@ -879,7 +894,199 @@ def telegram_page():
         marketing_tasks=marketing_tasks,
         blacklist_keywords=blacklist_keywords,
         marketing_preview=marketing_preview,
+        user_accounts=storage.list_telegram_user_accounts(),
     )
+
+
+# ==================== Telegram 用户账号管理 ====================
+
+@app.get("/telegram/user-accounts")
+def telegram_user_accounts_page():
+    """Telegram 用户账号管理页面"""
+    accounts = storage.list_telegram_user_accounts()
+    return render_template("telegram_user_accounts.html", accounts=accounts)
+
+
+@app.post("/telegram/user-accounts/add")
+def telegram_add_user_account():
+    """添加 Telegram 用户账号"""
+    api_id = request.form.get("api_id", "").strip()
+    api_hash = request.form.get("api_hash", "").strip()
+    phone = request.form.get("phone", "").strip()
+    bot_username = request.form.get("bot_username", "").strip()
+
+    if not api_id or not api_hash or not phone:
+        flash("请填写 API ID、API Hash 和手机号", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    try:
+        api_id = int(api_id)
+    except ValueError:
+        flash("API ID 必须是数字", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    # 创建客户端并连接
+    client = TelegramUserClient(api_id, api_hash, phone)
+
+    if not client.connect():
+        flash(f"连接 Telegram 失败: {client.client.last_error if hasattr(client, 'client') and hasattr(client.client, 'last_error') else '请检查网络和代理设置'}", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    # 获取会话字符串
+    session_string = client.get_session_string()
+    client.disconnect()
+
+    # 保存到数据库
+    account_data = {
+        "api_id": api_id,
+        "api_hash": api_hash,
+        "phone": phone,
+        "session_string": session_string,
+        "bot_username": bot_username,
+    }
+
+    storage.insert_telegram_user_account(account_data)
+    flash(f"账号 {phone} 添加成功", "success")
+    return redirect(url_for("telegram_user_accounts_page"))
+
+
+@app.post("/telegram/user-accounts/delete")
+def telegram_delete_user_account():
+    """删除 Telegram 用户账号"""
+    account_id = request.form.get("account_id")
+
+    if not account_id:
+        flash("参数错误", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    try:
+        account_id = int(account_id)
+    except ValueError:
+        flash("参数错误", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    storage.delete_telegram_user_account(account_id)
+    flash("账号已删除", "success")
+    return redirect(url_for("telegram_user_accounts_page"))
+
+
+@app.get("/telegram/user-accounts/fetch-groups")
+def telegram_fetch_groups_from_user():
+    """从用户账号获取群组并邀请 Bot 加入"""
+    account_id = request.args.get("account_id", type=int)
+
+    if not account_id:
+        flash("请指定账号", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    # 获取用户账号
+    account = storage.get_telegram_user_account(account_id)
+    if not account:
+        flash("账号不存在", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    # 创建客户端并连接
+    client = TelegramUserClient(
+        account["api_id"],
+        account["api_hash"],
+        account["phone"],
+        account.get("session_string")
+    )
+
+    if not client.connect():
+        flash(f"连接 Telegram 失败: 请检查网络和代理设置", "error")
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    # 获取所有群组
+    groups = client.get_all_groups()
+
+    if not groups:
+        flash("未找到任何群组", "warning")
+        client.disconnect()
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    # 获取 Bot 账号
+    bot_accounts = storage.list_xhs_accounts(platform="telegram")
+    if not bot_accounts:
+        flash("请先添加 Telegram Bot 账号", "error")
+        client.disconnect()
+        return redirect(url_for("telegram_user_accounts_page"))
+
+    bot_token = bot_accounts[0]["cookie"]
+    bot_username = account.get("bot_username", "")
+
+    if not bot_username:
+        # 尝试通过 Bot 获取用户名
+        bot = TelegramBot(bot_token)
+        bot_info = bot.get_me()
+        if bot_info:
+            bot_username = bot_info.get("username", "")
+        else:
+            flash("无法获取 Bot 用户名，请在账号设置中填写 Bot 用户名", "error")
+            client.disconnect()
+            return redirect(url_for("telegram_user_accounts_page"))
+
+    # 处理每个群组
+    saved_count = 0
+    invited_count = 0
+    skipped_blacklist = 0
+    failed_count = 0
+
+    blacklist_keywords = ["greek", "Greek", "格致", "sober", "戒酒", "戒毒", "康复"]
+
+    for group in groups:
+        chat_id = group.get("chat_id")
+        title = group.get("title", "未知")
+
+        # 检查黑名单
+        is_blacklisted = False
+        for keyword in blacklist_keywords:
+            if keyword.lower() in title.lower():
+                skipped_blacklist += 1
+                is_blacklisted = True
+                break
+
+        if is_blacklisted:
+            continue
+
+        # 检查是否已存在
+        existing = storage.get_telegram_group_by_chat_id(chat_id)
+        if existing:
+            saved_count += 1
+            invited_count += 1  # 假设已邀请
+            continue
+
+        # 尝试邀请 Bot 到群组
+        try:
+            # 使用 Bot API 获取群组信息
+            bot = TelegramBot(bot_token)
+            chat_info = bot.get_chat(chat_id)
+
+            if chat_info:
+                member_count = bot.get_chat_member_count(chat_id)
+            else:
+                member_count = None
+
+            # 保存群组
+            group_data = {
+                "chat_id": chat_id,
+                "title": title,
+                "username": group.get("username"),
+                "type": group.get("type", "group"),
+                "member_count": member_count,
+            }
+
+            storage.insert_telegram_group(group_data)
+            saved_count += 1
+            invited_count += 1
+        except Exception as e:
+            failed_count += 1
+            print(f"处理群组 {title} 失败: {e}")
+
+    client.disconnect()
+
+    flash(f"获取完成：成功保存 {saved_count} 个群组，跳过黑名单 {skipped_blacklist} 个，失败 {failed_count} 个", "success")
+    return redirect(url_for("telegram_user_accounts_page"))
 
 
 @app.post("/telegram/groups")
@@ -958,6 +1165,61 @@ def telegram_fetch_group():
     }
 
     storage.insert_telegram_group(group_data)
+    flash(f"群组已添加: {group_data['title']}", "success")
+    return redirect(url_for("telegram_page"))
+
+
+@app.get("/telegram/groups/fetch-all")
+def telegram_fetch_all_groups():
+    """自动获取 Bot 加入的所有群组"""
+    # 尝试从已保存的账号获取 Bot
+    accounts = storage.list_xhs_accounts(platform="telegram")
+    if not accounts:
+        flash("请先添加 Telegram Bot 账号", "error")
+        return redirect(url_for("telegram_page"))
+
+    bot = TelegramBot(accounts[0]["cookie"])
+    if not bot.test_connection():
+        flash(f"Bot 连接失败: {bot.last_error}", "error")
+        return redirect(url_for("telegram_page"))
+
+    # 获取群组列表
+    chats = bot.get_my_chats(timeout=5)
+
+    if not chats:
+        flash("未找到任何群组。请确保：1) Bot 已在群组中；2) 群组中有人发送过消息", "warning")
+        return redirect(url_for("telegram_page"))
+
+    # 保存群组
+    saved_count = 0
+    skipped_count = 0
+
+    for chat in chats:
+        chat_id = chat.get("chat_id")
+        title = chat.get("title", "未知")
+
+        # 检查是否已存在
+        existing = storage.get_telegram_group_by_chat_id(chat_id)
+        if existing:
+            skipped_count += 1
+            continue
+
+        # 获取成员数量
+        member_count = bot.get_chat_member_count(chat_id)
+
+        group_data = {
+            "chat_id": chat_id,
+            "title": title,
+            "username": chat.get("username"),
+            "type": chat.get("type", "group"),
+            "member_count": member_count,
+        }
+
+        storage.insert_telegram_group(group_data)
+        saved_count += 1
+
+    flash(f"成功添加 {saved_count} 个群组，跳过 {skipped_count} 个已存在的群组", "success")
+    return redirect(url_for("telegram_page"))
     flash(f"群组 '{chat_info.get('title')}' 添加成功", "success")
     return redirect(url_for("telegram_page"))
 
@@ -1179,10 +1441,14 @@ def telegram_blacklist_settings():
 
 # ==================== Telegram 一键群发 ====================
 
+# 黑名单关键词配置
+TELEGRAM_BLACKLIST_KEYWORDS = ["greeks", "格致"]
+
+
 @app.get("/telegram/quick")
 def telegram_quick_send_page():
     """Telegram 一键群发页面"""
-    return render_template("telegram_quick.html")
+    return render_template("telegram_quick.html", blacklist_keywords=TELEGRAM_BLACKLIST_KEYWORDS)
 
 
 @app.post("/telegram/quick/send")
@@ -1234,7 +1500,7 @@ def telegram_quick_send():
         return redirect(url_for("telegram_quick_send_page"))
 
     # 黑名单关键词（禁止发送给包含这些关键词的群组）
-    blacklist_keywords = ["greeks", "格致"]
+    blacklist_keywords = TELEGRAM_BLACKLIST_KEYWORDS
 
     # 获取 Bot 信息
     bot_name = getattr(bot, "bot_name", "Unknown")
@@ -1249,6 +1515,8 @@ def telegram_quick_send():
         # 先获取群组信息检查黑名单
         chat_info = bot.get_chat(chat_id)
         group_title = ""
+        is_blacklisted = False
+
         if chat_info:
             group_title = chat_info.get("title", "")
             # 检查黑名单关键词（不区分大小写）
@@ -1261,15 +1529,20 @@ def telegram_quick_send():
                         "status": "skipped",
                         "reason": f"群组标题包含关键词 '{keyword}'",
                     })
-                    continue
+                    is_blacklisted = True
+                    break
         else:
-            # 无法获取群组信息时，记录错误但继续尝试发送
+            # 无法获取群组信息时，记录错误
             results.append({
                 "chat_id": chat_id,
                 "group_title": group_title,
                 "status": "unknown",
                 "reason": bot.last_error or "无法获取群组信息",
             })
+
+        if is_blacklisted:
+            # 在黑名单中，跳过发送
+            continue
 
         if dry_run:
             # 试运行模式
@@ -1315,7 +1588,7 @@ def telegram_quick_send():
 
     mode_text = "试运行" if dry_run else "正式发送"
     flash(
-        f"{mode_text}完成：成功 {success_count} 个，失败 {failed_count} 个",
+        f"{mode_text}完成：成功 {success_count} 个，失败 {failed_count} 个，跳过黑名单 {skipped_blacklist} 个",
         "success" if success_count > 0 else "warning",
     )
 
@@ -1326,8 +1599,156 @@ def telegram_quick_send():
         results=results,
         success_count=success_count,
         failed_count=failed_count,
+        skipped_blacklist=skipped_blacklist,
         dry_run=dry_run,
     )
+
+
+# ==================== 搜狗微信爬虫 ====================
+
+@app.get("/wechat")
+def wechat_page():
+    """搜狗微信爬虫页面"""
+    articles = storage.list_wechat_articles(limit=100)
+    return render_template("wechat_spider.html", articles=articles, progress=crawl_progress)
+
+
+@app.get("/wechat/progress")
+def wechat_progress():
+    """获取爬取进度"""
+    return jsonify(crawl_progress)
+
+
+@app.post("/wechat/crawl")
+def wechat_crawl():
+    """执行爬取"""
+    global crawl_progress
+
+    keywords = request.form.get("keywords", "").strip()
+    days = int(request.form.get("days", 7))
+    max_pages = int(request.form.get("max_pages", 3))
+
+    if not keywords:
+        flash("请输入搜索关键词", "error")
+        return redirect(url_for("wechat_page"))
+
+    # 解析关键词
+    keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
+
+    if not keyword_list:
+        flash("请输入有效的关键词", "error")
+        return redirect(url_for("wechat_page"))
+
+    # 初始化进度状态
+    crawl_progress["status"] = "running"
+    crawl_progress["total_keywords"] = len(keyword_list)
+    crawl_progress["total_pages"] = max_pages
+    crawl_progress["total_articles"] = 0
+    crawl_progress["total_qr_codes"] = 0
+    crawl_progress["current_keyword"] = ""
+    crawl_progress["current_page"] = 0
+
+    # 创建爬虫实例
+    spider = SogouWechatSpider()
+
+    # 执行爬取
+    total_articles = 0
+    total_qr_codes = 0
+
+    for idx, keyword in enumerate(keyword_list):
+        crawl_progress["current_keyword"] = keyword
+        crawl_progress["message"] = f"正在搜索关键词: {keyword}"
+
+        for page in range(1, max_pages + 1):
+            crawl_progress["current_page"] = page
+            crawl_progress["message"] = f"正在搜索「{keyword}」第 {page} 页..."
+
+            articles = spider.search_articles(keyword, days=days, page=page)
+
+            if not articles:
+                break
+
+            for i, article in enumerate(articles):
+                crawl_progress["message"] = f"正在处理第 {i+1}/{len(articles)} 篇文章..."
+
+                # 获取文章详情（包括二维码）
+                detail = spider.get_article_detail(article["link"])
+
+                if detail:
+                    article.update(detail)
+
+                    # 提取二维码
+                    qr_code_url = ""
+                    qr_code_type = ""
+                    if detail.get("qr_codes"):
+                        qr_code_url = detail["qr_codes"][0].get("src", "")
+                        qr_code_type = detail["qr_codes"][0].get("type", "")
+
+                    # 保存到数据库
+                    article_data = {
+                        "title": article.get("title"),
+                        "link": article.get("link"),
+                        "source": article.get("source"),
+                        "author": article.get("author"),
+                        "pub_time": article.get("pub_time"),
+                        "abstract": article.get("abstract"),
+                        "keyword": keyword,
+                        "content": article.get("content"),
+                        "qr_code_url": qr_code_url,
+                        "qr_code_type": qr_code_type,
+                    }
+
+                    storage.insert_wechat_article(article_data)
+                    total_articles += 1
+                    crawl_progress["total_articles"] = total_articles
+
+                    if qr_code_url:
+                        total_qr_codes += 1
+                        crawl_progress["total_qr_codes"] = total_qr_codes
+
+                # 避免请求过快
+                time.sleep(1)
+
+            # 避免被封
+            time.sleep(2)
+
+    # 完成
+    spider.close()
+    crawl_progress["status"] = "completed"
+    crawl_progress["message"] = f"爬取完成！共获取 {total_articles} 篇文章，其中 {total_qr_codes} 篇包含二维码"
+
+    flash(f"爬取完成！共获取 {total_articles} 篇文章，其中 {total_qr_codes} 篇包含二维码", "success")
+    return redirect(url_for("wechat_page"))
+
+
+@app.post("/wechat/delete")
+def wechat_delete_article():
+    """删除文章"""
+    article_id = request.form.get("article_id")
+
+    if not article_id:
+        flash("参数错误", "error")
+        return redirect(url_for("wechat_page"))
+
+    try:
+        article_id = int(article_id)
+    except ValueError:
+        flash("参数错误", "error")
+        return redirect(url_for("wechat_page"))
+
+    storage.delete_wechat_article(article_id)
+    flash("文章已删除", "success")
+    return redirect(url_for("wechat_page"))
+
+
+@app.post("/wechat/clear")
+def wechat_clear_articles():
+    """清空文章"""
+    keyword = request.form.get("keyword", "").strip()
+
+    count = storage.clear_wechat_articles(keyword if keyword else None)
+    flash(f"已清空 {count} 篇文章", "success")
+    return redirect(url_for("wechat_page"))
 
 
 if __name__ == "__main__":

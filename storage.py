@@ -105,6 +105,33 @@ class Storage:
                     created_at TEXT NOT NULL
                 );
 
+                -- Telegram 用户账号表（用于获取群组）
+                CREATE TABLE IF NOT EXISTS telegram_user_accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    api_id INTEGER NOT NULL,
+                    api_hash TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    session_string TEXT,
+                    bot_username TEXT,
+                    added_at TEXT NOT NULL
+                );
+
+                -- 微信文章表（搜狗微信爬虫）
+                CREATE TABLE IF NOT EXISTS wechat_articles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    link TEXT NOT NULL,
+                    source TEXT,
+                    author TEXT,
+                    pub_time TEXT,
+                    abstract TEXT,
+                    keyword TEXT,
+                    content TEXT,
+                    qr_code_url TEXT,
+                    qr_code_type TEXT,
+                    crawled_at TEXT NOT NULL
+                );
+
                 -- Telegram 群组表
                 CREATE TABLE IF NOT EXISTS telegram_groups (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -754,9 +781,154 @@ class Storage:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # ==================== Telegram 用户账号 ====================
+
+    def insert_telegram_user_account(self, payload: dict[str, Any]) -> int:
+        """添加 Telegram 用户账号"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR REPLACE INTO telegram_user_accounts (
+                    api_id, api_hash, phone, session_string, bot_username, added_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["api_id"],
+                    payload["api_hash"],
+                    payload["phone"],
+                    payload.get("session_string", ""),
+                    payload.get("bot_username", ""),
+                    now,
+                ),
+            )
+            return cursor.lastrowid
+
+    def list_telegram_user_accounts(self) -> list[dict[str, Any]]:
+        """获取所有 Telegram 用户账号"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM telegram_user_accounts ORDER BY added_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_telegram_user_account(self, account_id: int) -> dict[str, Any] | None:
+        """获取 Telegram 用户账号"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM telegram_user_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_telegram_user_account(self, account_id: int) -> bool:
+        """删除 Telegram 用户账号"""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM telegram_user_accounts WHERE id = ?",
+                (account_id,),
+            )
+            return cursor.rowcount > 0
+
+    def update_telegram_user_account(self, account_id: int, payload: dict[str, Any]) -> None:
+        """更新 Telegram 用户账号"""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE telegram_user_accounts SET
+                    session_string = COALESCE(?, session_string),
+                    bot_username = COALESCE(?, bot_username)
+                WHERE id = ?
+                """,
+                (
+                    payload.get("session_string"),
+                    payload.get("bot_username"),
+                    account_id,
+                ),
+            )
+
+    # ==================== 微信文章（搜狗微信爬虫） ====================
+
+    def insert_wechat_article(self, payload: dict[str, Any]) -> int:
+        """保存微信文章"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO wechat_articles (
+                    title, link, source, author, pub_time, abstract, keyword, content,
+                    qr_code_url, qr_code_type, crawled_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload.get("title"),
+                    payload.get("link"),
+                    payload.get("source"),
+                    payload.get("author"),
+                    payload.get("pub_time"),
+                    payload.get("abstract"),
+                    payload.get("keyword"),
+                    payload.get("content"),
+                    payload.get("qr_code_url"),
+                    payload.get("qr_code_type"),
+                    now,
+                ),
+            )
+            return cursor.lastrowid
+
+    def list_wechat_articles(
+        self,
+        keyword: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """获取微信文章列表"""
+        sql = "SELECT * FROM wechat_articles"
+        params = []
+
+        if keyword:
+            sql += " WHERE keyword = ?"
+            params.append(keyword)
+
+        sql += " ORDER BY crawled_at DESC LIMIT ?"
+        params.append(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_wechat_article(self, article_id: int) -> dict[str, Any] | None:
+        """获取微信文章详情"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM wechat_articles WHERE id = ?",
+                (article_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_wechat_article(self, article_id: int) -> bool:
+        """删除微信文章"""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM wechat_articles WHERE id = ?",
+                (article_id,),
+            )
+            return cursor.rowcount > 0
+
+    def clear_wechat_articles(self, keyword: str | None = None) -> int:
+        """清空微信文章"""
+        with self._connect() as conn:
+            if keyword:
+                cursor = conn.execute(
+                    "DELETE FROM wechat_articles WHERE keyword = ?",
+                    (keyword,),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM wechat_articles")
+            return cursor.rowcount
+
     def get_blocked_keywords(self) -> list[str]:
         """获取黑名单关键词列表"""
-        return ["sober", "戒酒", "戒毒", "康复", "recovery", "aa"]
+        return ["sober", "greek", "Greek", "格致", "戒酒", "戒毒", "康复", "recovery", "aa"]
 
     def save_blocked_keywords(self, keywords: list[str]) -> None:
         """保存自定义黑名单关键词"""

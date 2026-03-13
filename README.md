@@ -7,6 +7,7 @@
 - `X.com`
 - `哔哩哔哩`
 - `Telegram` 群组营销
+- `微信` 公众号文章爬虫（新增）
 
 适合想快速验证这类流程的人：
 
@@ -37,6 +38,9 @@
 - `多平台账号管理`
   保存 Cookie，验证登录状态，默认选中最近登录账号
 
+- `微信公众号文章爬虫` ⭐NEW
+  使用 Playwright 绕过反爬机制，批量爬取微信文章，提取群二维码，支持关键词搜索和分页
+
 - `Telegram 群组营销`
   批量搜索 Telegram 群组、自动发送营销消息、黑名单过滤（自动跳过 Sober/戒酒等关键词群组）
 
@@ -66,6 +70,7 @@
 - `控制台`
 - `账号管理`
 - `Telegram 营销`
+- `微信爬虫` ⭐NEW
 - `内容搜索`
 - `回复任务`
 - `产品管理`
@@ -75,16 +80,17 @@
 
 - `Flask`
 - `SQLite`
-- `Selenium`
+- `Selenium` / `Playwright`
 - `Chrome / chromedriver`
 
 ## 项目结构
 
 - `app.py`：Flask 主应用和路由
 - `storage.py`：SQLite 存储层
-- `xiaohongshu.py`：当前承载 `X.com` 自动化逻辑
+- `xiaohongshu.py`：X.com 自动化逻辑
 - `bilibili_bot.py`：哔哩哔哩自动化逻辑
 - `telegram_bot.py`：Telegram 群组营销机器人
+- `sogou_wechat_spider.py`：搜狗微信文章爬虫（Playwright 驱动）
 - `templates/`：页面模板
 - `data/marketing.db`：本地数据库
 

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微信文章爬虫 - 营销系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .header h1 { font-size: 24px; color: #333; }
+        .nav { margin-top: 15px; }
+        .nav a { color: #1890ff; text-decoration: none; margin-right: 20px; }
+        .nav a:hover { text-decoration: underline; }
+        .card { background: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .card h2 { font-size: 18px; margin-bottom: 16px; color: #333; }
+        .form-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+        .form-group { flex: 1; min-width: 200px; }
+        .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: #333; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; }
+        .form-group textarea { min-height: 100px; resize: vertical; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #1890ff; outline: none; box-shadow: 0 0 0 2px rgba(24,144,255,0.2); }
+        .btn { display: inline-block; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; text-decoration: none; }
+        .btn-primary { background: #1890ff; color: white; }
+        .btn-primary:hover { background: #40a9ff; }
+        .btn-danger { background: #ff4d4f; color: white; }
+        .btn-danger:hover { background: #ff7875; }
+        .btn-success { background: #52c41a; color: white; }
+        .btn-success:hover { background: #73d13d; }
+        .btn-warning { background: #faad14; color: white; }
+        .btn-warning:hover { background: #ffc53d; }
+        .btn:disabled { background: #d9d9d9; cursor: not-allowed; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        .tips { background: #fff7e6; border: 1px solid #ffd591; padding: 16px; border-radius: 4px; margin-top: 20px; }
+        .tips h3 { color: #d46b08; font-size: 14px; margin-bottom: 8px; }
+        .tips p { color: #d46b08; font-size: 13px; line-height: 1.6; }
+        .flash-messages { margin-bottom: 20px; }
+        .flash { padding: 12px 16px; border-radius: 4px; margin-bottom: 10px; }
+        .flash-success { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
+        .flash-error { background: #fff2f0; color: #ff4d4f; border: 1px solid #ffccc7; }
+        .flash-warning { background: #fffbe6; color: #fa8c16; border: 1px solid #ffe58f; }
+        .flash-info { background: #e6f7ff; color: #1890ff; border: 1px solid #91d5ff; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+        th { background: #fafafa; font-weight: 500; color: #333; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; }
+        .badge-success { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
+        .badge-warning { background: #fffbe6; color: #fa8c16; border: 1px solid #ffe58f; }
+        .badge-info { background: #e6f7ff; color: #1890ff; border: 1px solid #91d5ff; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .article-card { border: 1px solid #e8e8e8; border-radius: 8px; padding: 16px; margin-bottom: 16px; background: #fafafa; }
+        .article-card h3 { font-size: 16px; margin-bottom: 8px; color: #1890ff; }
+        .article-card h3 a { color: #1890ff; text-decoration: none; }
+        .article-card h3 a:hover { text-decoration: underline; }
+        .article-meta { font-size: 12px; color: #999; margin-bottom: 8px; }
+        .article-meta span { margin-right: 16px; }
+        .article-abstract { font-size: 13px; color: #666; margin-bottom: 12px; line-height: 1.5; }
+        .qr-code { max-width: 150px; max-height: 150px; border-radius: 4px; border: 1px solid #e8e8e8; }
+        .qr-available { color: #52c41a; font-weight: 500; }
+        .qr-none { color: #999; }
+        .keyword-tag { display: inline-block; background: #e6f7ff; color: #1890ff; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 4px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 16px; }
+        .actions { display: flex; gap: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>微信文章爬虫 - 群二维码采集</h1>
+            <div class="nav">
+                <a href="/">控制台</a>
+                <a href="/accounts">账号管理</a>
+                <a href="/search">内容搜索</a>
+                <a href="/comments">回复任务</a>
+                <a href="/products">产品管理</a>
+                <a href="/stats">数据统计</a>
+                <a href="/wechat" class="active">微信爬虫</a>
+            </div>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            <div class="flash-messages">
+                {% for category, message in messages %}
+                <div class="flash flash-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- 爬取表单 -->
+        <div class="card">
+            <h2>爬取设置</h2>
+            <form method="post" action="/wechat/crawl">
+                <div class="form-row">
+                    <div class="form-group" style="flex: 2;">
+                        <label>搜索关键词（多个用逗号分隔）</label>
+                        <input type="text" name="keywords" placeholder="例如: 量化, AI, 人工智能, 机器学习" value="量化, AI">
+                    </div>
+                    <div class="form-group">
+                        <label>时间范围（天）</label>
+                        <input type="number" name="days" value="7" min="1" max="30">
+                    </div>
+                    <div class="form-group">
+                        <label>每关键词爬取页数</label>
+                        <input type="number" name="max_pages" value="3" min="1" max="10">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" id="startBtn">开始爬取</button>
+            </form>
+
+            <!-- 进度显示 -->
+            <div id="progressContainer" style="display: none; margin-top: 20px;">
+                <div style="background: #f0f0f0; border-radius: 4px; height: 20px; overflow: hidden; margin-bottom: 10px;">
+                    <div id="progressBar" style="background: linear-gradient(90deg, #1890ff, #40a9ff); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div id="progressText" style="text-align: center; color: #666; font-size: 14px;"></div>
+            </div>
+
+            <div class="tips">
+                <h3>使用说明</h3>
+                <p>
+                    1. 输入要搜索的关键词，如"量化"、"AI"、"人工智能"等<br>
+                    2. 系统会爬取最近N天的相关文章<br>
+                    3. 自动提取文章中的群二维码图片<br>
+                    4. 爬取的群二维码可用于扩大自媒体渠道<br>
+                    <br>
+                    <strong>注意：</strong>爬取速度已优化，避免请求过快被封。如遇限制，请稍后再试。
+                </p>
+            </div>
+        </div>
+
+        <!-- 文章列表 -->
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h2>已爬取的文章（共 {{ articles|length }} 篇）</h2>
+                <form method="post" action="/wechat/clear" style="display: inline;">
+                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('确认清空所有文章？');">清空全部</button>
+                </form>
+            </div>
+
+            {% if articles %}
+            <div class="grid">
+                {% for article in articles %}
+                <div class="article-card">
+                    <h3>
+                        <a href="{{ article.link }}" target="_blank">{{ article.title }}</a>
+                    </h3>
+                    <div class="article-meta">
+                        <span>来源: {{ article.source or '未知' }}</span>
+                        <span>作者: {{ article.author or '未知' }}</span>
+                    </div>
+                    <div class="article-meta">
+                        <span>发布时间: {{ article.pub_time or '未知' }}</span>
+                        <span>关键词: <span class="keyword-tag">{{ article.keyword }}</span></span>
+                    </div>
+                    <div class="article-abstract">
+                        {{ article.abstract or article.content[:200] if article.content else '无摘要' }}
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            {% if article.qr_code_url %}
+                            <span class="qr-available">✓ 包含群二维码</span>
+                            <br>
+                            <img src="{{ article.qr_code_url }}" alt="群二维码" class="qr-code" style="margin-top: 8px;">
+                            {% else %}
+                            <span class="qr-none">✗ 无二维码</span>
+                            {% endif %}
+                        </div>
+                        <form method="post" action="/wechat/delete" style="display: inline;">
+                            <input type="hidden" name="article_id" value="{{ article.id }}">
+                            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('确认删除？');">删除</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty">
+                <p>暂无爬取的文章，请点击上方"开始爬取"按钮</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+    // 进度轮询
+    let pollInterval = null;
+
+    function startPolling() {
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const startBtn = document.getElementById('startBtn');
+
+        progressContainer.style.display = 'block';
+        startBtn.disabled = true;
+        startBtn.textContent = '爬取中...';
+
+        pollInterval = setInterval(async () => {
+            try {
+                const response = await fetch('/wechat/progress');
+                const data = await response.json();
+
+                if (data.status === 'running') {
+                    // 计算进度百分比
+                    let progress = 0;
+                    if (data.total_keywords > 0) {
+                        const keywordProgress = (data.current_keyword ? 1 : 0) / data.total_keywords * 100;
+                        const pageProgress = data.current_page / data.total_pages * (100 / data.total_keywords);
+                        progress = keywordProgress + pageProgress;
+                    }
+                    progressBar.style.width = Math.min(progress, 95) + '%';
+                    progressText.innerHTML = `
+                        <strong>${data.message}</strong><br>
+                        已获取 ${data.total_articles} 篇文章，${data.total_qr_codes} 个二维码
+                    `;
+                } else if (data.status === 'completed') {
+                    // 爬取完成
+                    progressBar.style.width = '100%';
+                    progressText.innerHTML = `<strong style="color: #52c41a;">${data.message}</strong>`;
+                    clearInterval(pollInterval);
+                    startBtn.disabled = false;
+                    startBtn.textContent = '开始爬取';
+                    // 刷新页面显示新数据
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    // idle 状态
+                    progressContainer.style.display = 'none';
+                    startBtn.disabled = false;
+                    startBtn.textContent = '开始爬取';
+                    clearInterval(pollInterval);
+                }
+            } catch (e) {
+                console.error('获取进度失败:', e);
+            }
+        }, 1000);
+    }
+
+    // 监听表单提交
+    document.querySelector('form[action="/wechat/crawl"]').addEventListener('submit', function(e) {
+        e.preventDefault();
+        // 显示进度
+        startPolling();
+        // 提交表单
+        this.submit();
+    });
+
+    // 页面加载时检查进度
+    document.addEventListener('DOMContentLoaded', function() {
+        fetch('/wechat/progress')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'running') {
+                    startPolling();
+                }
+            });
+    });
+    </script>
+</body>
+</html>
