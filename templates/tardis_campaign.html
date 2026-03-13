@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tardis 营销活动 - 多平台自动营销系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; padding: 20px 0; margin-bottom: 20px; }
+        header h1 { font-size: 24px; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav a { padding: 10px 20px; background: white; color: #333; text-decoration: none; border-radius: 8px; font-weight: 500; }
+        .nav a:hover, .nav a.active { background: #6366f1; color: white; }
+        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card h2 { font-size: 18px; margin-bottom: 20px; border-bottom: 2px solid #f0f0f0; padding-bottom: 12px; }
+        .card h3 { font-size: 16px; margin: 16px 0 12px; color: #6366f1; }
+        .alerts { display: grid; gap: 12px; margin-bottom: 20px; }
+        .alert { padding: 14px 16px; border-radius: 10px; border: 1px solid transparent; font-size: 14px; }
+        .alert-error { background: #fff2f0; color: #a8071a; border-color: #ffccc7; }
+        .alert-warning { background: #fffbe6; color: #ad6800; border-color: #ffe58f; }
+        .alert-success { background: #f6ffed; color: #237804; border-color: #b7eb8f; }
+        .alert-info { background: #e6f7ff; color: #096dd9; border-color: #91d5ff; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 14px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #6366f1; outline: none; }
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; cursor: pointer; border: none; }
+        .btn-primary { background: #6366f1; color: white; }
+        .btn-primary:hover { background: #4f46e5; }
+        .btn-secondary { background: #f0f0f0; color: #333; }
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+        .keyword-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 12px; }
+        .keyword-tag { padding: 8px 14px; background: #f0f5ff; color: #6366f1; border: 1px solid #d6e4ff; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .keyword-tag:hover { background: #6366f1; color: white; border-color: #6366f1; }
+        .keyword-tag.selected { background: #6366f1; color: white; border-color: #6366f1; }
+        .priority-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin-right: 8px; }
+        .priority-critical { background: #fff2f0; color: #cf1322; }
+        .priority-high { background: #fff7e6; color: #d46b08; }
+        .priority-medium { background: #fffbe6; color: #ad6800; }
+        .priority-regular { background: #f0f5ff; color: #096dd9; }
+        .info-box { background: #f9f9ff; border: 1px solid #e6e6ff; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+        .info-box h4 { color: #6366f1; margin-bottom: 8px; }
+        .info-box ul { margin: 0; padding-left: 20px; color: #666; font-size: 14px; }
+        .info-box li { margin-bottom: 4px; }
+        .strategy-desc { font-size: 13px; color: #666; margin-top: 8px; padding: 12px; background: #fafafa; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Tardis 自动化营销系统</h1>
+        </div>
+    </header>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">控制台</a>
+            <a href="/accounts">账号管理</a>
+            <a href="/search" class="active">内容搜索</a>
+            <a href="/comments">回复任务</a>
+            <a href="/products">产品管理</a>
+            <a href="/stats">数据统计</a>
+            <a href="/wechat">微信爬虫</a>
+        </nav>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="alerts">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="card">
+            <h2>Tardis 营销活动配置</h2>
+
+            <div class="info-box">
+                <h4>目标人群</h4>
+                <ul>
+                    <li>量化开发者（回测/研究）</li>
+                    <li>HFT 团队（order book / microstructure / execution）</li>
+                    <li>期权/波动率/做市研究者</li>
+                    <li>需要跨交易所历史数据的机构</li>
+                    <li>数据平台/因子库/策略 SaaS 的 B2B 团队</li>
+                </ul>
+            </div>
+
+            <form method="post" action="/tardis/campaign">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>选择 X.com 账号 *</label>
+                        <select name="account_id" required>
+                            <option value="">请选择已登录账号</option>
+                            {% for account in accounts %}
+                            <option value="{{ account.id }}">{{ account.nickname or account.phone }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>评论策略</label>
+                        <select name="strategy">
+                            <option value="diagnosis">诊断型 - 指出问题是数据层而非模型层</option>
+                            <option value="value_add">价值型 - 强调 tick 数据的独特价值</option>
+                            <option value="sample">样例型 - 提供免费样例数据</option>
+                            <option value="demo">演示型 - 引导 demo 预约</option>
+                        </select>
+                        <div class="strategy-desc">
+                            自动添加 CTA 引导至 https://tardis.dev
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>搜索数量</label>
+                        <input type="number" name="limit" value="50" min="10" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>最大评论数</label>
+                        <input type="number" name="max_comments" value="30" min="1" max="50">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>选择搜索关键词（点击选择或手动输入）</label>
+                    <input type="text" name="keyword" id="keyword_input" placeholder="点击下方关键词或手动输入" required>
+                </div>
+
+                <h3>最高优先级（核心痛点）</h3>
+                <div class="keyword-grid">
+                    {% for kw in tardis_keywords.critical %}
+                    <div class="keyword-tag" onclick="selectKeyword('{{ kw }}')">{{ kw }}</div>
+                    {% endfor %}
+                </div>
+
+                <h3>高优先级（交易所数据）</h3>
+                <div class="keyword-grid">
+                    {% for kw in tardis_keywords.high %}
+                    <div class="keyword-tag" onclick="selectKeyword('{{ kw }}')">{{ kw }}</div>
+                    {% endfor %}
+                </div>
+
+                <h3>中优先级（衍生品数据）</h3>
+                <div class="keyword-grid">
+                    {% for kw in tardis_keywords.medium %}
+                    <div class="keyword-tag" onclick="selectKeyword('{{ kw }}')">{{ kw }}</div>
+                    {% endfor %}
+                </div>
+
+                <h3>常规优先级（研究相关）</h3>
+                <div class="keyword-grid">
+                    {% for kw in tardis_keywords.regular %}
+                    <div class="keyword-tag" onclick="selectKeyword('{{ kw }}')">{{ kw }}</div>
+                    {% endfor %}
+                </div>
+
+                <div style="margin-top: 24px;">
+                    <button type="submit" class="btn btn-primary">开始执行 Tardis 营销活动</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>功能说明</h2>
+            <div class="info-box">
+                <ul>
+                    <li><strong>自动过滤 Sober 用户：</strong>不会在任何包含 "Sober" 或 "sober" 的用户名帖子下留言</li>
+                    <li><strong>自动排除噪音帖子：</strong>搜索时自动过滤 airdrop、giveaway、meme、price prediction 等噪音</li>
+                    <li><strong>个性化评论内容：</strong>根据帖子内容识别提及的交易所和数据类型，生成相关度更高的评论</li>
+                    <li><strong>专业话术模板：</strong>诊断型/价值型/样例型/演示型四种策略，针对 Tardis 数据服务优化</li>
+                    <li><strong>自动引导转化：</strong>评论自动附带 Tardis 官网链接和免费样例/demo 引导</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function selectKeyword(kw) {
+            document.getElementById('keyword_input').value = kw;
+            // 移除其他选中状态
+            document.querySelectorAll('.keyword-tag').forEach(function(el) {
+                el.classList.remove('selected');
+            });
+            // 选中当前点击的
+            event.target.classList.add('selected');
+        }
+    </script>
+</body>
+</html>

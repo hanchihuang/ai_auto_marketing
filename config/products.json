@@ -102,5 +102,20 @@
       "购买咨询"
     ],
     "target_tags": ["书", "图书", "绘本", "童书", "文具", "笔记本", "学习", "阅读", "书架"]
+  },
+  {
+    "code": "tardis",
+    "name": "Tardis",
+    "description": "Raw Tick-Level Market Data API - 提供 spot / perpetual / futures / options 的原始 tick 数据，支持 exchange-native 和 normalized 两种数据形态。官网: https://tardis.dev",
+    "price": "详见官网",
+    "wechat_id": "",
+    "features": [
+      "Tick-level 原始数据",
+      "Order Book (L2) 数据",
+      "跨交易所历史数据",
+      "期权/期货/永续数据",
+      "免费样例数据"
+    ],
+    "target_tags": ["tick data", "order book", "market data", "crypto", "quant", "backtest", "historical data", "binance", "bybit", "deribit", "trading", "HFT", "market microstructure"]
   }
 ]

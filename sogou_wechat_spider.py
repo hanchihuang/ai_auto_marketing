@@ -342,9 +342,14 @@ class SogouWechatSpider:
             qr_codes.extend(self._extract_qr_codes_from_page(page))
 
         # 方法4: 兜底 - 如果以上方法都没找到，遍历所有图片进行图像验证
-        # 这可以找到URL没有明显特征但实际是二维码的图片
         if not qr_codes and page:
             qr_codes.extend(self._verify_all_images(page))
+
+        # 方法5: 在页面内对疑似二维码的 img 做区域截图再识别（可拿到页面实际渲染图，绕过防盗链）
+        if not qr_codes and page:
+            in_page_qr = self._get_qr_from_page_screenshot(page)
+            if in_page_qr:
+                qr_codes.extend(in_page_qr)
 
         # 获取文章内容摘要
         content = ""
@@ -360,10 +365,27 @@ class SogouWechatSpider:
             "qr_codes": qr_codes,
         }
 
-    def _is_valid_qr_code(self, image_url: str) -> bool:
-        """下载图片并验证是否为有效的二维码"""
+    def _is_wechat_placeholder(self, image_np: np.ndarray) -> bool:
+        """判断是否为微信防盗链占位图（黑底+右下角白框「此图片来自微信公众平台」）"""
         try:
-            # 使用 requests 下载图片，设置超时和 headers
+            if image_np is None or image_np.size == 0:
+                return True
+            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY) if len(image_np.shape) == 3 else image_np
+            mean_val = float(np.mean(gray))
+            # 占位图绝大部分为黑色，整体亮度很低
+            if mean_val < 25:
+                return True
+            # 可选：检查是否大部分像素接近黑色
+            black_ratio = np.sum(gray < 40) / gray.size
+            if black_ratio > 0.85:
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _is_valid_qr_code(self, image_url: str) -> bool:
+        """下载图片并验证是否为有效的二维码；若为微信占位图则判定为无效"""
+        try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
                 "Referer": "https://mp.weixin.qq.com/",
@@ -372,29 +394,25 @@ class SogouWechatSpider:
             if response.status_code != 200:
                 return False
 
-            # 将图片转换为 OpenCV 格式
             image_bytes = io.BytesIO(response.content)
             image = Image.open(image_bytes).convert("RGB")
             image_np = np.array(image)
 
-            # 转换为灰度图进行二维码识别
-            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+            # 先判断是否为微信防盗链占位图，避免误判为“无二维码”
+            if self._is_wechat_placeholder(image_np):
+                print(f"检测到微信防盗链占位图，已跳过: {image_url[:60]}...")
+                return False
 
-            # 使用 pyzbar 识别二维码
+            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
             decoded_objects = decode_qrcode(gray)
 
             if decoded_objects:
-                # 检查识别的内容是否有效（二维码）
                 for obj in decoded_objects:
-                    # 微信群二维码通常包含特定关键词
                     data = obj.data.decode("utf-8", errors="ignore")
-                    # 群二维码可能是 URL 或文本
                     if data and len(data) > 0:
                         return True
-
             return False
         except Exception as e:
-            # 如果识别失败，保守起见返回 False
             return False
 
     def _extract_qr_codes_from_element(self, element) -> list:
@@ -568,6 +586,51 @@ class SogouWechatSpider:
 
         return qr_codes
 
+    def _get_qr_from_page_screenshot(self, page) -> list:
+        """在页面内对疑似二维码的 img 做区域截图并识别，可拿到浏览器实际渲染的图（有时能绕过防盗链）"""
+        import base64
+        qr_codes = []
+        try:
+            # 优先在正文区域找可能为二维码的 img
+            selector = "#js_content img, .rich_media_content img"
+            imgs = page.query_selector_all(selector)
+            for img in imgs:
+                try:
+                    src = img.get_attribute("src") or img.get_attribute("data-src") or ""
+                    if not src or "weixin.qq.com/s?" in src or src.startswith("data:"):
+                        continue
+                    box = img.bounding_box()
+                    if not box or box.get("width", 0) < 50 or box.get("height", 0) < 50:
+                        continue
+                    screenshot_bytes = img.screenshot(type="png")
+                    if not screenshot_bytes:
+                        continue
+                    image_np = np.frombuffer(screenshot_bytes, dtype=np.uint8)
+                    image_np = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+                    if image_np is None:
+                        continue
+                    if self._is_wechat_placeholder(image_np):
+                        continue
+                    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+                    decoded = decode_qrcode(gray)
+                    if decoded:
+                        for obj in decoded:
+                            if obj.data and len(obj.data) > 0:
+                                b64 = base64.b64encode(screenshot_bytes).decode("ascii")
+                                qr_codes.append({
+                                    "type": "page_screenshot_verified",
+                                    "src": src,
+                                    "alt": img.get_attribute("alt") or "",
+                                    "screenshot_base64": b64,
+                                })
+                                print(f"页面截图识别到二维码: src={src[:50]}...")
+                                return qr_codes
+                except Exception as e:
+                    continue
+        except Exception as e:
+            print(f"页面截图二维码检测失败: {e}")
+        return qr_codes
+
     def batch_search(
         self,
         keywords: list[str],
@@ -597,6 +660,23 @@ class SogouWechatSpider:
                 time.sleep(2)
 
         return all_articles
+
+
+def is_wechat_placeholder_image(image_bytes: bytes) -> bool:
+    """根据图片字节判断是否为微信防盗链占位图（供 app 代理等使用）"""
+    try:
+        if not image_bytes or len(image_bytes) < 100:
+            return True
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image_np = np.array(image)
+        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+        mean_val = float(np.mean(gray))
+        if mean_val < 25:
+            return True
+        black_ratio = np.sum(gray < 40) / gray.size
+        return black_ratio > 0.85
+    except Exception:
+        return False
 
 
 # 测试

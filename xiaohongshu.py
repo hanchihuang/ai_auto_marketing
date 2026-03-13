@@ -259,6 +259,9 @@ class XiaohongshuBot:
                     post = self._parse_tweet(article, keyword)
                     if not post or post["post_id"] in seen_ids:
                         continue
+                    # 过滤 Sober 用户发布的帖子
+                    if self._should_filter_author(post.get("author", "")):
+                        continue
                     seen_ids.add(post["post_id"])
                     posts.append(post)
                     if len(posts) >= limit:
@@ -272,6 +275,13 @@ class XiaohongshuBot:
         except Exception as exc:
             self.last_error = f"搜索失败: {exc}"
             return []
+
+    def _should_filter_author(self, author_name: str) -> bool:
+        """检查作者名是否应该被过滤（包含 Sober/sober）"""
+        if not author_name:
+            return False
+        author_lower = author_name.lower()
+        return "sober" in author_lower
 
     def _parse_tweet(self, article, keyword: str) -> Optional[dict[str, Any]]:
         try:

@@ -19,6 +19,18 @@ from storage import Storage
 from bilibili_bot import BilibiliBot
 from xiaohongshu import XiaohongshuBot, CommentGenerator, CommentStrategy, Product
 from sogou_wechat_spider import SogouWechatSpider
+from tardis_marketing import (
+    TardisCommentGenerator,
+    TardisCommentStrategy,
+    TardisProduct,
+    TardisCampaign,
+    TARDIS_KEYWORDS,
+    ALL_TARDIS_KEYWORDS,
+    FULL_TARDIS_KEYWORDS,
+    EXCLUDE_FILTERS,
+    get_keywords_by_priority,
+    build_search_query,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -60,6 +72,22 @@ def build_product_model(product: dict) -> Product:
         features=product.get("features", []) or [],
         target_tags=product.get("target_tags", []) or [],
     )
+
+
+def is_tardis_product(product: dict) -> bool:
+    """判断是否为 Tardis 产品"""
+    return product.get("code", "").lower() == "tardis"
+
+
+def get_comment_generator(product: dict):
+    """根据产品类型获取合适的评论生成器"""
+    if is_tardis_product(product):
+        return TardisCommentGenerator(TardisProduct(
+            name=product.get("name", "Tardis"),
+            description=product.get("description", ""),
+            website="https://tardis.dev",
+        ))
+    return CommentGenerator(build_product_model(product))
 
 
 def get_default_account_id(accounts: list[dict]) -> int | None:
@@ -200,17 +228,34 @@ def batch_comment_for_account(
     if not web_accessible_posts:
         return {"ok": False, "message": f"当前{platform_label}内容没有可在网页端打开的详情页，无法执行自动回复"}
 
-    try:
-        strategy_enum = CommentStrategy(strategy)
-    except ValueError:
-        return {"ok": False, "message": "评论策略无效"}
+    # 判断是否为 Tardis 产品，使用对应的评论策略
+    if is_tardis_product(product):
+        try:
+            strategy_enum = TardisCommentStrategy(strategy)
+        except ValueError:
+            # 如果不是有效的 Tardis 策略，回退到诊断型
+            strategy_enum = TardisCommentStrategy.DIAGNOSIS
+    else:
+        try:
+            strategy_enum = CommentStrategy(strategy)
+        except ValueError:
+            return {"ok": False, "message": "评论策略无效"}
 
     success_count = 0
     failed_count = 0
 
     for post in web_accessible_posts[:max_comments_value]:
-        comment_gen = CommentGenerator(build_product_model(product))
-        comment_text = comment_gen.generate_comment(strategy_enum)
+        # 根据产品类型使用不同的评论生成器
+        comment_gen = get_comment_generator(product)
+        
+        if is_tardis_product(product):
+            # Tardis 产品使用专用评论生成器
+            tardis_strategy = TardisCommentStrategy(strategy) if strategy in [s.value for s in TardisCommentStrategy] else TardisCommentStrategy.DIAGNOSIS
+            comment_text = comment_gen.generate_comment(tardis_strategy, post.get("content", ""))
+        else:
+            # 普通产品使用原有评论生成器
+            comment_text = comment_gen.generate_comment(CommentStrategy(strategy))
+            
         success = bot.comment_post(post["post_id"], comment_text, post.get("url", ""))
         error_message = "" if success else (bot.last_error or "回复失败")
 
@@ -395,6 +440,7 @@ def search_page():
         default_product_id=default_product_id,
         default_workflow_accounts=default_workflow_accounts,
         hot_posts=hot_posts,
+        full_keywords=FULL_TARDIS_KEYWORDS,
     )
 
 
@@ -739,6 +785,243 @@ def products_page():
     return render_template("products.html", products=products)
 
 
+# ==================== Tardis 营销活动 ====================
+
+@app.get("/tardis")
+def tardis_campaign_page():
+    """Tardis 营销活动页面"""
+    accounts = storage.list_xhs_accounts()
+    online_accounts = [a for a in accounts if a.get("status") == "online"]
+    return render_template(
+        "tardis_campaign.html",
+        accounts=online_accounts,
+        tardis_keywords=TARDIS_KEYWORDS,
+    )
+
+
+@app.post("/tardis/campaign")
+def run_tardis_campaign():
+    """执行 Tardis 营销活动"""
+    account_id = request.form.get("account_id", type=int)
+    keyword = request.form.get("keyword", "").strip()
+    strategy = request.form.get("strategy", "diagnosis")
+    limit = request.form.get("limit", "50").strip()
+    max_comments = request.form.get("max_comments", "30").strip()
+
+    if not account_id:
+        flash("请选择账号", "error")
+        return redirect(url_for("tardis_campaign_page"))
+
+    if not keyword:
+        flash("请选择或输入关键词", "error")
+        return redirect(url_for("tardis_campaign_page"))
+
+    try:
+        limit_value = max(10, min(int(limit), 100))
+        max_comments_value = max(1, min(int(max_comments), 50))
+    except ValueError:
+        flash("搜索数量和评论数量必须是数字", "error")
+        return redirect(url_for("tardis_campaign_page"))
+
+    # 构建带过滤的搜索关键词
+    search_keyword = build_search_query(keyword, add_filters=True)
+
+    account = storage.get_xhs_account(account_id)
+    if not account or account["status"] != "online":
+        flash("账号未登录", "error")
+        return redirect(url_for("tardis_campaign_page"))
+
+    # 获取 Tardis 产品
+    products = storage.list_products()
+    tardis_product = None
+    for p in products:
+        if p.get("code", "").lower() == "tardis":
+            tardis_product = p
+            break
+
+    if not tardis_product:
+        # 创建临时 Tardis 产品
+        tardis_product = {
+            "code": "tardis",
+            "name": "Tardis",
+            "description": "Raw Tick-Level Market Data API - 提供 spot / perpetual / futures / options 的原始 tick 数据",
+            "price": "详见官网",
+            "wechat_id": "",
+        }
+
+    # 先清空历史帖子
+    storage.clear_xhs_hot_posts("x")
+    flash("已清空历史帖子，开始执行 Tardis 营销活动", "info")
+
+    # 搜索帖子
+    search_result = search_posts_for_account(account, search_keyword, limit_value)
+    if not search_result.get("ok"):
+        flash(f"搜索失败: {search_result.get('message')}", "error")
+        return redirect(url_for("tardis_campaign_page"))
+
+    flash(f"搜索完成，找到 {search_result.get('saved_count', 0)} 条帖子", "success")
+
+    # 执行批量评论
+    comment_result = batch_comment_for_account(
+        account=account,
+        product=tardis_product,
+        strategy=strategy,
+        max_comments_value=max_comments_value,
+        min_likes_value=0,
+    )
+
+    if comment_result.get("ok"):
+        flash(
+            f"Tardis 营销完成！成功评论 {comment_result.get('success_count', 0)} 条，失败 {comment_result.get('failed_count', 0)} 条",
+            "success" if comment_result.get("success_count", 0) > 0 else "warning",
+        )
+    else:
+        flash(f"评论失败: {comment_result.get('message')}", "error")
+
+    return redirect(url_for("tardis_campaign_page"))
+
+
+# ==================== Tardis 批量营销活动 ====================
+
+@app.get("/tardis/batch")
+def tardis_batch_campaign_page():
+    """Tardis 批量营销活动页面"""
+    accounts = storage.list_xhs_accounts()
+    online_accounts = [a for a in accounts if a.get("status") == "online"]
+    return render_template(
+        "tardis_batch_campaign.html",
+        accounts=online_accounts,
+        full_keywords=FULL_TARDIS_KEYWORDS,
+    )
+
+
+@app.post("/tardis/batch_campaign")
+def run_tardis_batch_campaign():
+    """执行 Tardis 批量营销活动 - 遍历所有关键词"""
+    from tardis_marketing import FULL_TARDIS_KEYWORDS
+
+    # 获取参数
+    x_account_id = request.form.get("x_account_id", type=int)
+    bilibili_account_id = request.form.get("bilibili_account_id", type=int)
+    platforms = request.form.getlist("platforms")  # 可以是 ["x"], ["bilibili"], 或 ["x", "bilibili"]
+    strategy = request.form.get("strategy", "diagnosis")
+    search_limit = request.form.get("search_limit", "100").strip()
+    comment_limit = request.form.get("comment_limit", "100").strip()
+    keywords_input = request.form.get("keywords_input", "").strip()
+    use_all_keywords = request.form.get("use_all_keywords") == "on"
+
+    if not platforms:
+        flash("请选择至少一个平台", "error")
+        return redirect(url_for("tardis_batch_campaign_page"))
+
+    # 确定使用的关键词
+    if use_all_keywords:
+        keywords = FULL_TARDIS_KEYWORDS
+    elif keywords_input:
+        keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
+    else:
+        flash("请选择使用全部关键词或输入自定义关键词", "error")
+        return redirect(url_for("tardis_batch_campaign_page"))
+
+    # 验证账号
+    accounts_dict = {}
+    if "x" in platforms:
+        if not x_account_id:
+            flash("选择了 X.com 平台，请选择 X.com 账号", "error")
+            return redirect(url_for("tardis_batch_campaign_page"))
+        x_account = storage.get_xhs_account(x_account_id)
+        if not x_account or x_account.get("status") != "online":
+            flash("X.com 账号未登录或状态异常", "error")
+            return redirect(url_for("tardis_batch_campaign_page"))
+        accounts_dict["x"] = x_account
+
+    if "bilibili" in platforms:
+        if not bilibili_account_id:
+            flash("选择了哔哩哔哩平台，请选择哔哩哔哩账号", "error")
+            return redirect(url_for("tardis_batch_campaign_page"))
+        bilibili_account = storage.get_xhs_account(bilibili_account_id)
+        if not bilibili_account or bilibili_account.get("status") != "online":
+            flash("哔哩哔哩账号未登录或状态异常", "error")
+            return redirect(url_for("tardis_batch_campaign_page"))
+        accounts_dict["bilibili"] = bilibili_account
+
+    # 解析数量限制
+    try:
+        search_limit_value = max(10, min(int(search_limit), 100))
+        comment_limit_value = max(1, min(int(comment_limit), 100))
+    except ValueError:
+        flash("搜索数量和评论数量必须是数字", "error")
+        return redirect(url_for("tardis_batch_campaign_page"))
+
+    # 获取 Tardis 产品
+    products = storage.list_products()
+    tardis_product = None
+    for p in products:
+        if p.get("code", "").lower() == "tardis":
+            tardis_product = p
+            break
+    if not tardis_product:
+        tardis_product = {
+            "code": "tardis",
+            "name": "Tardis",
+            "description": "Raw Tick-Level Market Data API",
+            "price": "详见官网",
+            "wechat_id": "",
+        }
+
+    # 统计结果
+    total_stats = {
+        "keywords_processed": 0,
+        "posts_found": 0,
+        "comments_success": 0,
+        "comments_failed": 0,
+    }
+
+    # 遍历每个关键词
+    for keyword in keywords:
+        keyword = keyword.strip()
+        if not keyword:
+            continue
+
+        total_stats["keywords_processed"] += 1
+        search_keyword = build_search_query(keyword, add_filters=True)
+
+        # 对每个平台执行
+        for platform in platforms:
+            account = accounts_dict.get(platform)
+            if not account:
+                continue
+
+            # 清空该平台的帖子
+            storage.clear_xhs_hot_posts(platform)
+
+            # 搜索
+            search_result = search_posts_for_account(account, search_keyword, search_limit_value)
+            if search_result.get("ok"):
+                total_stats["posts_found"] += search_result.get("saved_count", 0)
+
+            # 评论
+            comment_result = batch_comment_for_account(
+                account=account,
+                product=tardis_product,
+                strategy=strategy,
+                max_comments_value=comment_limit_value,
+                min_likes_value=0,
+            )
+            if comment_result.get("ok"):
+                total_stats["comments_success"] += comment_result.get("success_count", 0)
+                total_stats["comments_failed"] += comment_result.get("failed_count", 0)
+
+    flash(
+        f"批量营销完成！共处理 {total_stats['keywords_processed']} 个关键词，"
+        f"找到 {total_stats['posts_found']} 条帖子，"
+        f"成功评论 {total_stats['comments_success']} 条，失败 {total_stats['comments_failed']} 条",
+        "success" if total_stats["comments_success"] > 0 else "warning",
+    )
+
+    return redirect(url_for("tardis_batch_campaign_page"))
+
+
 @app.post("/products")
 def add_product():
     """添加产品"""
@@ -770,6 +1053,35 @@ def add_product():
 def delete_product(product_id: int):
     """删除产品"""
     storage.update_product(product_id, {"status": "deleted"})
+    return redirect(url_for("products_page"))
+
+
+@app.post("/products/edit")
+def edit_product():
+    """编辑产品"""
+    product_id = request.form.get("product_id", type=int)
+    code = request.form.get("code", "").strip()
+    name = request.form.get("name", "").strip()
+    description = request.form.get("description", "").strip()
+    price = request.form.get("price", "").strip()
+    wechat_id = request.form.get("wechat_id", "").strip()
+    target_tags = request.form.get("target_tags", "").strip()
+
+    if not product_id or not code or not name:
+        abort(400, "产品ID、代码和名称不能为空")
+
+    tags = [t.strip() for t in target_tags.split(",") if t.strip()]
+
+    storage.update_product(product_id, {
+        "code": code,
+        "name": name,
+        "description": description,
+        "price": price,
+        "wechat_id": wechat_id,
+        "target_tags": tags,
+    })
+
+    flash("产品更新成功", "success")
     return redirect(url_for("products_page"))
 
 
@@ -847,7 +1159,7 @@ def wechat_progress():
 
 @app.get("/wechat/qr_image")
 def wechat_qr_image():
-    """代理微信二维码图片，解决防盗链无法显示"""
+    """代理微信二维码图片；若返回的是微信防盗链占位图则返回 404 并提示"""
     from urllib.parse import unquote
     from flask import Response
 
@@ -856,11 +1168,33 @@ def wechat_qr_image():
         abort(404)
     url = unquote(url)
 
-    # 只允许代理微信图片 CDN，禁止文章页 URL
     if "/s?" in url:
         abort(403)
     if "wx.qlogo.cn" not in url and "mmbiz.qpic.cn" not in url:
         abort(403)
+
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://mp.weixin.qq.com/",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "image/png")
+        from sogou_wechat_spider import is_wechat_placeholder_image
+        if is_wechat_placeholder_image(data):
+            return Response(
+                '{"error":"wechat_placeholder","message":"此图片来自微信公众平台，未经允许不可引用，无法显示。请复制文章链接在微信内打开查看二维码。"}',
+                status=404,
+                mimetype="application/json",
+            )
+        return Response(data, mimetype=content_type)
+    except Exception as e:
+        app.logger.warning(f"qr_image proxy failed: {e}")
+        abort(502)
 
 
 @app.post("/wechat/fetch_qr")
@@ -886,9 +1220,15 @@ def wechat_fetch_qr():
 
         qr_codes = detail.get("qr_codes", [])
         if qr_codes:
-            # 返回第一个二维码的真实图片 URL
-            qr_url = qr_codes[0].get("src", "")
-            # 优先返回图片 CDN URL
+            # 优先返回页面截图得到的 base64（可绕过防盗链），否则返回 CDN URL
+            first = qr_codes[0]
+            if first.get("screenshot_base64"):
+                return jsonify({
+                    "success": True,
+                    "qr_url": first.get("src", ""),
+                    "qr_image_data": f"data:image/png;base64,{first['screenshot_base64']}",
+                })
+            qr_url = first.get("src", "")
             for qr in qr_codes:
                 src = qr.get("src", "")
                 if "mmbiz.qpic.cn" in src or "wx.qlogo.cn" in src:
@@ -896,7 +1236,10 @@ def wechat_fetch_qr():
                     break
             return jsonify({"success": True, "qr_url": qr_url})
         else:
-            return jsonify({"success": False, "error": "文章中未找到二维码"})
+            return jsonify({
+                "success": False,
+                "error": "文章中未找到二维码，或二维码图片受微信公众平台保护无法获取。请复制链接在微信内打开查看。",
+            })
 
     except Exception as e:
         app.logger.error(f"fetch_qr failed: {e}")
@@ -923,22 +1266,6 @@ def wechat_update_qr():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
-
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://mp.weixin.qq.com/",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            content_type = resp.headers.get("Content-Type", "image/png")
-            data = resp.read()
-        return Response(data, mimetype=content_type)
-    except Exception as e:
-        app.logger.warning(f"qr_image proxy failed: {e}")
-        abort(502)
 
 
 @app.post("/wechat/crawl")

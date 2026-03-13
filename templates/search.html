@@ -118,6 +118,76 @@
             </div>
         </div>
 
+        <!-- Tardis 一键工作流区域 -->
+        <div class="card" style="border: 2px solid #6366f1;">
+            <h2 style="color: #6366f1;">Tardis 营销专用一键工作流（搜索后批量评论）</h2>
+            <p style="color:#666;font-size:13px;margin-bottom:12px;">
+                针对 Tardis 数据服务的高意图关键词，自动执行：搜索 → 过滤 Sober 用户 → 生成专业话术 → 批量评论 → 引导转化
+            </p>
+            <form method="post" action="/tardis/campaign">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>选择 X.com 账号 *</label>
+                        <select name="account_id" required>
+                            <option value="">请选择已登录账号</option>
+                            {% for account in accounts %}
+                            <option value="{{ account.id }}" {% if account.status == 'online' %}selected{% endif %}>
+                                {{ account.nickname or account.phone }} {% if account.status == 'online' %}(在线){% else %}(离线){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>评论策略</label>
+                        <select name="strategy">
+                            <option value="diagnosis">诊断型 - 指出问题是数据层而非模型层</option>
+                            <option value="value_add">价值型 - 强调 tick 数据的独特价值</option>
+                            <option value="sample">样例型 - 提供免费样例数据</option>
+                            <option value="demo">演示型 - 引导 demo 预约</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>搜索数量</label>
+                        <input type="number" name="limit" value="50" min="10" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>最大评论数</label>
+                        <input type="number" name="max_comments" value="30" min="1" max="50">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>选择 Tardis 关键词（点击选择或手动输入）</label>
+                    <input type="text" name="keyword" id="tardis_keyword" placeholder="点击下方关键词标签快速选择" required>
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <span style="font-size:13px;color:#666;">快速选择：</span>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='crypto tick data'">crypto tick data</span>
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='order book data crypto'">order book data</span>
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='binance futures historical data'">binance futures</span>
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='deribit options data'">deribit options</span>
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='market microstructure crypto'">market microstructure</span>
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='backtesting crypto data'">backtesting data</span>
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='liquidation data crypto'">liquidation data</span>
+                        <span class="keyword-tag" onclick="document.getElementById('tardis_keyword').value='funding rate data crypto'">funding rate</span>
+                    </div>
+                </div>
+                <button type="submit" class="btn" style="background: #6366f1; color: white; font-size: 16px; padding: 12px 24px;">
+                    一键执行：搜索 + 批量评论
+                </button>
+            </form>
+            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #ddd;">
+                <a href="/tardis/batch" class="btn" style="background: #f59f00; color: white; font-size: 14px; padding: 10px 20px; text-decoration: none; display: inline-block;">
+                    批量营销（遍历全部 {{ full_keywords|length if full_keywords else 40 }} 个关键词）
+                </a>
+                <span style="color:#999;font-size:12px;margin-left:12px;">全平台批量执行，适合大规模推广</span>
+            </div>
+        </div>
+        <style>
+            .keyword-tag { padding: 6px 12px; background: #f0f5ff; color: #6366f1; border: 1px solid #d6e4ff; border-radius: 16px; font-size: 12px; cursor: pointer; transition: all 0.2s; display: inline-block; }
+            .keyword-tag:hover { background: #6366f1; color: white; border-color: #6366f1; }
+        </style>
+
         <div class="card">
             <h2>X.com / 哔哩哔哩 一键工作流</h2>
             <p style="color:#666;font-size:13px;margin-bottom:12px;">

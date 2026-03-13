@@ -290,13 +290,13 @@
             const data = await resp.json();
 
             if (data.success) {
-                // 提取成功，更新页面显示二维码，并保存到数据库
-                const qrUrl = data.qr_url;
+                const qrUrl = data.qr_url || '';
                 const container = btn.parentElement;
+                // 优先使用页面截图得到的 base64，避免防盗链占位图
+                const imgSrc = data.qr_image_data || ('/wechat/qr_image?url=' + encodeURIComponent(qrUrl));
 
-                // 创建图片元素
                 const img = document.createElement('img');
-                img.src = '/wechat/qr_image?url=' + encodeURIComponent(qrUrl);
+                img.src = imgSrc;
                 img.alt = '群二维码';
                 img.className = 'qr-code';
                 img.style = 'margin-top: 8px; max-width: 160px; height: auto;';
@@ -308,7 +308,8 @@
 
                 const errorSpan = document.createElement('span');
                 errorSpan.style.display = 'none';
-                errorSpan.innerHTML = '图片加载失败，<a href="' + qrUrl + '" target="_blank" rel="noopener">点击查看</a>';
+                errorSpan.innerHTML = '图片无法显示（多为微信公众平台防盗链）。请复制文章链接在微信内打开查看二维码。' +
+                    (qrUrl ? ' <a href="' + qrUrl + '" target="_blank" rel="noopener">打开原图</a>' : '');
 
                 // 移除按钮和状态，添加图片
                 btn.style.display = 'none';
