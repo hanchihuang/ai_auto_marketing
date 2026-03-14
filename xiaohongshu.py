@@ -349,6 +349,15 @@ class XiaohongshuBot:
             influencers = list(author_stats.values())
             influencers.sort(key=lambda x: x["total_likes"], reverse=True)
 
+            # 返回调试信息：显示每个作者收集到的帖子数和点赞数
+            debug_info = []
+            for inf in influencers[:10]:
+                debug_info.append({
+                    "author": inf["author"],
+                    "posts_collected": inf["total_posts"],
+                    "total_likes": inf["total_likes"],
+                })
+
             # 计算平均点赞并返回结果
             result = []
             for inf in influencers[:limit]:
@@ -359,8 +368,11 @@ class XiaohongshuBot:
                     "total_posts": inf["total_posts"],
                     "total_likes": inf["total_likes"],
                     "avg_likes": avg_likes,
-                    "posts": inf["posts"][:5],  # 最多保留5条帖子
+                    "posts": inf["posts"][:5],
                 })
+
+            if not result:
+                self.last_error = f"未找到博主。调试信息: {debug_info}"
 
             return result
         except Exception as exc:
@@ -579,10 +591,35 @@ class XiaohongshuBot:
 
     def _extract_metric(self, text: str, token: str) -> int:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
+        
+        # 情况1: "123 Like" 同一行
+        for line in lines:
+            lower = line.lower()
+            if token in lower:
+                # 提取数字
+                import re
+                numbers = re.findall(r'[\d,.]+', line)
+                for num in numbers:
+                    count = self._parse_count(num)
+                    if count > 0:
+                        return count
+        
+        # 情况2: "123" 在 "Like" 前面一行
         for index, line in enumerate(lines):
             lower = line.lower()
             if token in lower and index > 0:
-                return self._parse_count(lines[index - 1])
+                count = self._parse_count(lines[index - 1])
+                if count > 0:
+                    return count
+        
+        # 情况3: "Like" 在 "123" 前面一行
+        for index, line in enumerate(lines):
+            lower = line.lower()
+            if token in lower and index < len(lines) - 1:
+                count = self._parse_count(lines[index + 1])
+                if count > 0:
+                    return count
+        
         return 0
 
     def _parse_count(self, raw: str) -> int:

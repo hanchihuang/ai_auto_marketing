@@ -625,7 +625,7 @@ def user_posts_comment():
     product_id = request.form.get("product_id", type=int)
     target_username = request.form.get("username", "").strip()
     strategy = request.form.get("strategy", "soft")
-    max_comments = request.form.get("max_comments", "10").strip()
+    max_comments = request.form.get("max_comments", "50").strip()
 
     if not account_id:
         flash("请选择账号", "error")
