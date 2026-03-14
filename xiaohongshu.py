@@ -287,7 +287,7 @@ class XiaohongshuBot:
         try:
             # 使用热门搜索，不用 f=live（最新），用 f=top 或不带参数（综合）
             self.driver.get(f"{self.BASE_URL}/search?q={quote(keyword)}&src=typed_query")
-            time.sleep(5)
+            time.sleep(6)
 
             if self._is_login_page():
                 self.last_error = "当前账号未登录 X.com，无法执行搜索"
@@ -307,15 +307,21 @@ class XiaohongshuBot:
             scroll_count = 0
             max_scrolls = 20
 
+            def get_articles():
+                els = self.driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
+                if not els:
+                    els = self.driver.find_elements(By.CSS_SELECTOR, 'article[role="article"]')
+                return els
+
             while scroll_count < max_scrolls:
-                articles = self.driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
+                articles = get_articles()
                 for article in articles:
                     post = self._parse_tweet_for_influencer(article, keyword)
                     if not post:
                         continue
-                    author_id = post.get("author_id", "")
-                    author_name = post.get("author", "")
-                    if not author_id or not author_name or self._should_filter_author(author_name):
+                    author_id = post.get("author_id", "").strip()
+                    author_name = (post.get("author", "") or "").strip() or author_id
+                    if not author_id or self._should_filter_author(author_name):
                         continue
 
                     if author_id not in author_stats:
@@ -396,25 +402,28 @@ class XiaohongshuBot:
 
             parsed = urlparse(post_link)
             path = parsed.path.rstrip("/")
-            post_id = path.split("/")[-1]
-            author_id = path.split("/")[1] if len(path.split("/")) > 2 else ""
+            parts = [p for p in path.split("/") if p]
+            post_id = parts[-1] if parts else ""
+            # 路径通常为 username/status/postid 或 /username/status/postid
+            author_id = parts[0] if len(parts) >= 3 else (parts[0] if parts else "")
 
-            # 尝试多种方式获取作者名
+            # 尝试多种方式获取作者显示名，最终用 author_id 兜底
             author = ""
             try:
-                # 方法1: 查找链接中的用户名（链接中的 @username）
                 user_links = article.find_elements(By.XPATH, './/a[contains(@href, "/") and not(contains(@href, "/status/")) and not(contains(@href, "?"))]')
                 for link in user_links:
-                    href = link.get_attribute("href") or ""
-                    if "/" in href and "x.com" in href.lower():
-                        parts = href.rstrip("/").split("/")
-                        if len(parts) >= 4:  # https://x.com/username
-                            author = parts[-1]
+                    href = (link.get_attribute("href") or "").strip()
+                    if not href or "status" in href:
+                        continue
+                    if "x.com" in href.lower() or "twitter.com" in href.lower():
+                        segs = href.rstrip("/").split("/")
+                        uname = segs[-1] if segs else ""
+                        if uname and uname != "search" and "?" not in uname:
+                            author = uname
                             break
             except Exception:
                 pass
 
-            # 方法2: 如果链接中没有找到，尝试从 User-Name 元素获取
             if not author:
                 author = self._find_within(
                     article,
@@ -425,20 +434,21 @@ class XiaohongshuBot:
                     ],
                 )
 
-            # 方法3: 从 article 的文本中提取第一个 @mention
             if not author:
                 import re
-                mentions = re.findall(r'@(\w+)', article.text)
+                mentions = re.findall(r"@([a-zA-Z0-9_]+)", article.text)
                 if mentions:
                     author = mentions[0]
 
-            # 解析点赞数
+            author = (author or "").strip() or author_id
+            if not author_id:
+                author_id = author
+            if not author_id:
+                return None
+
             metric_text = article.text
             likes = self._extract_metric(metric_text, "like")
             comments = self._extract_metric(metric_text, "repl")
-
-            if not author:
-                return None
 
             return {
                 "post_id": post_id,

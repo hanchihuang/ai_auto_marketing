@@ -509,6 +509,9 @@ def search_hot_posts():
 @app.get("/search/influencers")
 def search_influencers_page():
     """博主搜索页面"""
+    import logging
+    logger = logging.getLogger(__name__)
+
     account_id = request.args.get("account_id", type=int)
     keyword = request.args.get("keyword", "").strip()
     accounts = storage.list_xhs_accounts()
@@ -518,15 +521,23 @@ def search_influencers_page():
 
     influencers = []
     error_message = ""
+    debug_info = ""
     if selected_account_id and keyword:
         account = storage.get_xhs_account(selected_account_id)
+        logger.info(f"[搜索博主] 账号: {account}, 关键词: {keyword}")
         if account and account["status"] == "online":
-            bot = ensure_logged_in_bot(account)
-            if bot and hasattr(bot, "search_top_influencers"):
-                influencers = bot.search_top_influencers(keyword, limit=20)
-                if hasattr(bot, "last_error") and bot.last_error:
-                    error_message = bot.last_error
-                bot.close()
+            try:
+                bot = ensure_logged_in_bot(account)
+                if bot and hasattr(bot, "search_top_influencers"):
+                    logger.info(f"[搜索博主] 开始搜索...")
+                    influencers = bot.search_top_influencers(keyword, limit=20)
+                    logger.info(f"[搜索博主] 搜索完成，结果数: {len(influencers)}, last_error: {getattr(bot, 'last_error', 'N/A')}")
+                    if hasattr(bot, "last_error") and bot.last_error:
+                        error_message = bot.last_error
+                    bot.close()
+            except Exception as e:
+                logger.error(f"[搜索博主] 异常: {e}")
+                error_message = f"搜索出错: {str(e)}"
         elif account and account["status"] != "online":
             error_message = "账号未在线，请先在账号管理中验证登录状态"
 
@@ -538,6 +549,7 @@ def search_influencers_page():
         accounts=accounts,
         influencers=influencers,
         error_message=error_message,
+        debug_info=debug_info,
     )
 
 

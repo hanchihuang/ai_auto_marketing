@@ -101,6 +101,9 @@
             {% if error_message %}
             <div class="alert alert-error">{{ error_message }}</div>
             {% endif %}
+            {% if debug_info %}
+            <div class="alert alert-warning">{{ debug_info }}</div>
+            {% endif %}
             {% if influencers %}
             <div class="influencer-list">
                 {% for inf in influencers %}
