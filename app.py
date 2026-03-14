@@ -504,6 +504,37 @@ def search_hot_posts():
     return redirect(url_for("search_page", account_id=account_id, keyword=keyword))
 
 
+# ==================== 博主搜索 ====================
+
+@app.get("/search/influencers")
+def search_influencers_page():
+    """博主搜索页面"""
+    account_id = request.args.get("account_id", type=int)
+    keyword = request.args.get("keyword", "").strip()
+    accounts = storage.list_xhs_accounts()
+    default_account_id = get_default_account_id(accounts)
+    selected_account_id = account_id or default_account_id
+    selected_account = storage.get_xhs_account(selected_account_id) if selected_account_id else None
+
+    influencers = []
+    if selected_account_id and keyword:
+        account = storage.get_xhs_account(selected_account_id)
+        if account and account["status"] == "online":
+            bot = ensure_logged_in_bot(account)
+            if bot and hasattr(bot, "search_top_influencers"):
+                influencers = bot.search_top_influencers(keyword, limit=20)
+                bot.close()
+
+    return render_template(
+        "search_influencers.html",
+        account_id=selected_account_id,
+        default_account_id=default_account_id,
+        keyword=keyword,
+        accounts=accounts,
+        influencers=influencers,
+    )
+
+
 @app.post("/search/hot-posts/clear")
 def clear_hot_posts():
     """一键清空已搜集推文"""

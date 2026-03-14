@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>博主搜索 - 多平台自动营销系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #ff2442 0%, #ff6b6b 100%); color: white; padding: 20px 0; margin-bottom: 20px; }
+        header h1 { font-size: 24px; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav a { padding: 10px 20px; background: white; color: #333; text-decoration: none; border-radius: 8px; font-weight: 500; }
+        .nav a:hover, .nav a.active { background: #ff2442; color: white; }
+        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card h2 { font-size: 18px; margin-bottom: 20px; border-bottom: 2px solid #f0f0f0; padding-bottom: 12px; }
+        .alerts { display: grid; gap: 12px; margin-bottom: 20px; }
+        .alert { padding: 14px 16px; border-radius: 10px; border: 1px solid transparent; font-size: 14px; }
+        .alert-error { background: #fff2f0; color: #a8071a; border-color: #ffccc7; }
+        .alert-warning { background: #fffbe6; color: #ad6800; border-color: #ffe58f; }
+        .alert-success { background: #f6ffed; color: #237804; border-color: #b7eb8f; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 500; }
+        .form-group input, .form-group select { width: 100%; padding: 10px 14px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
+        .form-group input:focus { border-color: #ff2442; outline: none; }
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; cursor: pointer; border: none; }
+        .btn-primary { background: #ff2442; color: white; }
+        .btn-primary:hover { background: #e6203b; }
+        .btn-secondary { background: #f0f0f0; color: #333; }
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+        .influencer-list { display: flex; flex-direction: column; gap: 16px; }
+        .influencer-card { display: flex; gap: 20px; padding: 20px; background: #fafafa; border-radius: 12px; border: 1px solid #f0f0f0; }
+        .influencer-card:hover { border-color: #ff2442; }
+        .influencer-rank { font-size: 24px; font-weight: bold; color: #ff2442; min-width: 40px; text-align: center; }
+        .influencer-info { flex: 1; }
+        .influencer-name { font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #333; }
+        .influencer-name a { color: #1890ff; text-decoration: none; }
+        .influencer-name a:hover { text-decoration: underline; }
+        .influencer-stats { display: flex; gap: 20px; color: #666; font-size: 14px; margin-bottom: 12px; }
+        .influencer-stats span { display: flex; align-items: center; gap: 4px; }
+        .stat-highlight { color: #ff2442; font-weight: 600; }
+        .post-preview { background: white; border-radius: 8px; padding: 12px; margin-top: 12px; }
+        .post-preview-title { font-size: 14px; color: #333; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .post-preview-meta { display: flex; gap: 12px; color: #999; font-size: 12px; }
+        .empty { text-align: center; padding: 60px; color: #999; }
+        .empty-icon { font-size: 48px; margin-bottom: 16px; }
+        .tip { background: #e6f7ff; border: 1px solid #91d5ff; border-radius: 8px; padding: 16px; margin-bottom: 20px; color: #0050b3; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>多平台自动营销系统</h1>
+        </div>
+    </header>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">控制台</a>
+            <a href="/accounts">账号管理</a>
+            <a href="/search">内容搜索</a>
+            <a href="/search/influencers" class="active">博主搜索</a>
+            <a href="/comments">回复任务</a>
+            <a href="/user-posts">用户帖子</a>
+            <a href="/products">产品管理</a>
+            <a href="/stats">数据统计</a>
+            <a href="/wechat">微信爬虫</a>
+        </nav>
+
+        <div class="card">
+            <h2>搜索领域博主 (X.com)</h2>
+            <div class="tip">
+                输入关键词，搜索该领域最受欢迎的博主。按总点赞数排序，帮助您快速找到目标领域的意见领袖。
+            </div>
+            <form method="get" action="/search/influencers">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>选择账号 *</label>
+                        <select name="account_id" required>
+                            <option value="">请选择已登录账号</option>
+                            {% for account in accounts %}
+                            <option value="{{ account.id }}" {% if account_id == account.id %}selected{% endif %}>
+                                {{ account.nickname or account.phone }} {% if account.status == 'online' %}(在线){% else %}(离线){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>搜索关键词 *</label>
+                        <input type="text" name="keyword" value="{{ keyword or '' }}" placeholder="如: AI、bitcoin、saas、编程、测评" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">搜索博主</button>
+                <a href="/search" class="btn btn-secondary">返回内容搜索</a>
+            </form>
+        </div>
+
+        {% if keyword %}
+        <div class="card">
+            <h2>「{{ keyword }}」领域热门博主 (共 {{ influencers|length }} 位)</h2>
+            {% if influencers %}
+            <div class="influencer-list">
+                {% for inf in influencers %}
+                <div class="influencer-card">
+                    <div class="influencer-rank">#{{ loop.index }}</div>
+                    <div class="influencer-info">
+                        <div class="influencer-name">
+                            <a href="https://x.com/{{ inf.author_id }}" target="_blank">@{{ inf.author }}</a>
+                        </div>
+                        <div class="influencer-stats">
+                            <span>总帖子: <strong>{{ inf.total_posts }}</strong></span>
+                            <span>总点赞: <strong class="stat-highlight">{{ inf.total_likes }}</strong></span>
+                            <span>平均点赞: <strong>{{ inf.avg_likes }}</strong></span>
+                        </div>
+                        {% if inf.posts %}
+                        <div class="post-preview">
+                            {% for post in inf.posts[:3] %}
+                            <div class="post-preview-title">
+                                <a href="{{ post.url }}" target="_blank">{{ post.content }}</a>
+                            </div>
+                            <div class="post-preview-meta">
+                                <span>👍 {{ post.likes }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty">
+                <div class="empty-icon">🔍</div>
+                <p>未找到相关博主，请尝试其他关键词</p>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

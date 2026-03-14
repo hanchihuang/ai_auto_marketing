@@ -278,6 +278,127 @@ class XiaohongshuBot:
             self.last_error = f"搜索失败: {exc}"
             return []
 
+    def search_top_influencers(self, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
+        """搜索关键词领域最受欢迎的博主，按影响力排序"""
+        if not self.driver:
+            raise Exception("请先登录")
+
+        self.last_error = ""
+        try:
+            # 搜索关键词相关内容
+            self.driver.get(f"{self.BASE_URL}/search?q={quote(keyword)}&src=typed_query&f=live")
+            time.sleep(5)
+
+            if self._is_login_page():
+                self.last_error = "当前账号未登录 X.com，无法执行搜索"
+                return []
+
+            # 收集帖子和作者信息
+            author_stats: dict[str, dict[str, Any]] = {}
+            scroll_count = 0
+            max_scrolls = 15
+
+            while scroll_count < max_scrolls:
+                articles = self.driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
+                for article in articles:
+                    post = self._parse_tweet_for_influencer(article, keyword)
+                    if not post:
+                        continue
+                    author_id = post.get("author_id", "")
+                    author_name = post.get("author", "")
+                    if not author_id or self._should_filter_author(author_name):
+                        continue
+
+                    if author_id not in author_stats:
+                        author_stats[author_id] = {
+                            "author_id": author_id,
+                            "author": author_name,
+                            "total_likes": 0,
+                            "total_posts": 0,
+                            "posts": [],
+                        }
+
+                    stats = author_stats[author_id]
+                    stats["total_likes"] += post.get("likes", 0)
+                    stats["total_posts"] += 1
+                    stats["posts"].append({
+                        "post_id": post.get("post_id", ""),
+                        "content": post.get("content", "")[:100],
+                        "likes": post.get("likes", 0),
+                        "url": post.get("url", ""),
+                    })
+
+                # 检查是否已收集到足够多的作者
+                if len(author_stats) >= limit * 2:
+                    break
+
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(*self.config.get("scroll_delay", (2, 4))))
+                scroll_count += 1
+
+            # 按总点赞数排序，筛选出最受欢迎的博主
+            influencers = list(author_stats.values())
+            influencers.sort(key=lambda x: x["total_likes"], reverse=True)
+
+            # 计算平均点赞并返回结果
+            result = []
+            for inf in influencers[:limit]:
+                avg_likes = inf["total_likes"] // inf["total_posts"] if inf["total_posts"] > 0 else 0
+                result.append({
+                    "author_id": inf["author_id"],
+                    "author": inf["author"],
+                    "total_posts": inf["total_posts"],
+                    "total_likes": inf["total_likes"],
+                    "avg_likes": avg_likes,
+                    "posts": inf["posts"][:5],  # 最多保留5条帖子
+                })
+
+            return result
+        except Exception as exc:
+            self.last_error = f"搜索博主失败: {exc}"
+            return []
+
+    def _parse_tweet_for_influencer(self, article, keyword: str) -> Optional[dict[str, Any]]:
+        """解析推文用于博主分析"""
+        try:
+            text = self._find_within(article, [(By.CSS_SELECTOR, '[data-testid="tweetText"]')])
+            post_link = self._find_attr_within(
+                article,
+                [(By.XPATH, './/a[contains(@href, "/status/")]')],
+                "href",
+            )
+            if not post_link:
+                return None
+
+            parsed = urlparse(post_link)
+            path = parsed.path.rstrip("/")
+            post_id = path.split("/")[-1]
+            author_id = path.split("/")[1] if len(path.split("/")) > 2 else ""
+            author = self._find_within(
+                article,
+                [
+                    (By.CSS_SELECTOR, '[data-testid="User-Name"]'),
+                    (By.XPATH, './/div[@data-testid="User-Name"]'),
+                ],
+            )
+
+            metric_text = article.text
+            likes = self._extract_metric(metric_text, "like")
+            comments = self._extract_metric(metric_text, "repl")
+
+            return {
+                "post_id": post_id,
+                "content": text or "",
+                "author": author,
+                "author_id": author_id,
+                "likes": likes,
+                "comments": comments,
+                "url": post_link.split("?")[0],
+                "search_keyword": keyword,
+            }
+        except Exception:
+            return None
+
     def get_user_posts(self, username: str, limit: int = 20) -> list[dict[str, Any]]:
         """获取指定用户的最近帖子"""
         if not self.driver:
