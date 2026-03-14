@@ -178,69 +178,102 @@ class BilibiliBot:
 
         self.last_error = ""
         try:
-            # 访问哔哩哔哩用户搜索页面
-            search_url = f"{self.SEARCH_URL}?keyword={quote(keyword)}&search_type=upuser"
-            self.driver.get(search_url)
-            time.sleep(3)
+            # 1. 先访问搜索页面
+            self.driver.get(self.SEARCH_URL)
+            time.sleep(2)
 
             if self._is_login_page():
                 self.last_error = "当前账号未登录 Bilibili，无法执行搜索"
                 return []
 
-            # 等待用户结果加载
-            time.sleep(2)
+            # 2. 找到搜索框并输入关键词
+            search_selectors = [
+                (By.CSS_SELECTOR, "input[placeholder*='搜索']"),
+                (By.CSS_SELECTOR, "input.nav-search-input"),
+                (By.CSS_SELECTOR, "input#search-keyword"),
+                (By.XPATH, "//input[contains(@placeholder, '搜索')]"),
+            ]
+            search_input = self._find_clickable(search_selectors, timeout=5)
+            if search_input:
+                search_input.clear()
+                search_input.send_keys(keyword)
+                search_input.send_keys("\n")
+                time.sleep(3)
+            else:
+                # 直接用 URL 搜索
+                self.driver.get(f"{self.SEARCH_URL}?keyword={quote(keyword)}")
+                time.sleep(3)
 
-            # 收集up主信息
+            # 3. 点击「用户」tab 切换到用户搜索结果
+            user_tab_selectors = [
+                (By.XPATH, '//span[contains(text(), "用户")]/ancestor::a[@data-type="bili_user"]'),
+                (By.XPATH, '//a[contains(@data-type, "bili_user")]'),
+                (By.XPATH, '//a[contains(@href, "search_type=bili_user")]'),
+                (By.XPATH, '//div[contains(@class, "filter")]//span[text()="用户"]/ancestor::a'),
+                (By.CSS_SELECTOR, 'a[data-type="bili_user"]'),
+                (By.XPATH, '//span[text()="用户"]/ancestor::a[1]'),
+            ]
+            user_tab = self._find_clickable(user_tab_selectors, timeout=5)
+            if user_tab:
+                print(f"[B站博主搜索] 点击用户tab: {user_tab.get_attribute('href')}")
+                user_tab.click()
+                time.sleep(3)
+            else:
+                print(f"[B站博主搜索] 未找到用户tab，尝试直接访问用户搜索URL")
+                self.driver.get(f"{self.SEARCH_URL}?keyword={quote(keyword)}&search_type=bili_user")
+                time.sleep(3)
+
+            # 4. 滚动加载更多用户
             up_stats: dict[str, dict[str, Any]] = {}
             scroll_count = 0
             max_scrolls = 15
 
             while scroll_count < max_scrolls:
-                # 尝试多种选择器获取up主卡片
-                up_cards = (
-                    self.driver.find_elements(By.CSS_SELECTOR, ".up-card-wrap") or
-                    self.driver.find_elements(By.CSS_SELECTOR, ".bili-up-user") or
-                    self.driver.find_elements(By.CSS_SELECTOR, "[class*='up-user']") or
-                    self.driver.find_elements(By.XPATH, '//a[contains(@href, "/up/")]') or
-                    self.driver.find_elements(By.XPATH, '//div[contains(@class, "up")]//a')
+                # 等待页面加载
+                time.sleep(1)
+
+                # 获取用户列表项
+                user_items = (
+                    self.driver.find_elements(By.CSS_SELECTOR, ".bili-user-list-item") or
+                    self.driver.find_elements(By.CSS_SELECTOR, ".user-list-item") or
+                    self.driver.find_elements(By.CSS_SELECTOR, "[class*='user-list'] a") or
+                    self.driver.find_elements(By.XPATH, '//a[contains(@href, "/space/")]')
                 )
 
-                for card in up_cards:
+                print(f"[B站博主搜索] 第 {scroll_count} 次滚动，获取到 {len(user_items)} 个用户元素")
+
+                for item in user_items:
                     try:
-                        # 获取up主链接和ID
-                        href = card.get_attribute("href") or ""
-                        if not href or "/up/" not in href:
+                        href = item.get_attribute("href") or ""
+                        if not href or "/space/" not in href:
                             continue
 
+                        # 从 URL 提取用户 ID
                         parsed = urlparse(href)
                         path = parsed.path.rstrip("/")
-                        parts = path.split("/")
-                        author_id = parts[-1] if parts else ""
+                        author_id = path.split("/")[-1]
 
                         if not author_id:
                             continue
 
-                        # 获取up主名称
-                        author = (
-                            card.get_attribute("title") or
-                            card.get_attribute("text") or
-                            card.text.strip() or
-                            author_id
-                        )
-                        # 清理名称
-                        if len(author) > 50:
-                            author = author[:50]
+                        # 获取用户名
+                        name_elem = item.find_element(By.CSS_SELECTOR, ".user-name") or item
+                        author = (name_elem.text or author_id).strip()
+
+                        # 过滤太短的名字
+                        if len(author) < 2:
+                            continue
 
                         # 获取粉丝数
+                        fans = 0
                         try:
-                            # 尝试在卡片内找粉丝数
-                            fan_elem = card.find_element(By.XPATH, ".//span[contains(text(), '粉丝') or contains(text(), 'Fans')]")
+                            fan_elem = item.find_element(By.XPATH, './/span[contains(text(), "粉丝")]')
                             fan_text = fan_elem.text if fan_elem else ""
                             fans = self._parse_count(fan_text.replace("粉丝", "").replace(",", ""))
                         except:
-                            fans = 0
+                            pass
 
-                        # 过滤非up主链接
+                        # 过滤
                         if self._should_filter_author(author):
                             continue
 
@@ -250,6 +283,47 @@ class BilibiliBot:
                                 "author": author,
                                 "fans": fans,
                                 "total_posts": 0,
+                                "posts": [],
+                            }
+                        else:
+                            if fans > up_stats[author_id]["fans"]:
+                                up_stats[author_id]["fans"] = fans
+
+                    except Exception as e:
+                        continue
+
+                # 检查是否已收集到足够多的 up 主
+                if len(up_stats) >= limit * 2:
+                    break
+
+                # 滚动
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(1, 2))
+                scroll_count += 1
+
+            # 5. 按粉丝数排序
+            influencers = list(up_stats.values())
+            influencers.sort(key=lambda x: x.get("fans", 0), reverse=True)
+
+            # 6. 返回结果
+            result = []
+            for inf in influencers[:limit]:
+                result.append({
+                    "author_id": inf["author_id"],
+                    "author": inf["author"],
+                    "fans": inf["fans"],
+                    "total_posts": inf["total_posts"],
+                    "platform": "bilibili",
+                    "profile_url": f"https://space.bilibili.com/{inf['author_id']}",
+                })
+
+            if not result:
+                self.last_error = f"未找到相关博主，当前页面URL: {self.driver.current_url}"
+
+            return result
+        except Exception as exc:
+            self.last_error = f"搜索博主失败: {exc}"
+            return []
                                 "posts": [],
                             }
 
