@@ -324,55 +324,6 @@ class BilibiliBot:
         except Exception as exc:
             self.last_error = f"搜索博主失败: {exc}"
             return []
-                                "posts": [],
-                            }
-
-                        # 更新粉丝数（取最大值）
-                        if fans > up_stats[author_id]["fans"]:
-                            up_stats[author_id]["fans"] = fans
-
-                    except Exception:
-                        continue
-
-                # 检查是否已收集到足够多的up主
-                if len(up_stats) >= limit * 2:
-                    break
-
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(random.uniform(1, 2))
-                scroll_count += 1
-
-            # 按粉丝数排序
-            influencers = list(up_stats.values())
-            influencers.sort(key=lambda x: x.get("fans", 0), reverse=True)
-
-            # 返回调试信息
-            debug_info = []
-            for inf in influencers[:10]:
-                debug_info.append({
-                    "author": inf["author"],
-                    "fans": inf["fans"],
-                })
-
-            # 返回结果
-            result = []
-            for inf in influencers[:limit]:
-                result.append({
-                    "author_id": inf["author_id"],
-                    "author": inf["author"],
-                    "fans": inf["fans"],
-                    "total_posts": inf["total_posts"],
-                    "platform": "bilibili",
-                    "profile_url": f"https://space.bilibili.com/{inf['author_id']}",
-                })
-
-            if not result:
-                self.last_error = f"未找到博主。调试信息: {debug_info}"
-
-            return result
-        except Exception as exc:
-            self.last_error = f"搜索博主失败: {exc}"
-            return []
 
     def _should_filter_author(self, author: str) -> bool:
         """过滤不想要的作者"""
