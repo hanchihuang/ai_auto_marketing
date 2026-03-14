@@ -171,6 +171,143 @@ class BilibiliBot:
             self.last_error = f"搜索失败: {exc}"
             return []
 
+    def search_top_influencers(self, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
+        """搜索关键词领域最受欢迎的博主，按粉丝数/影响力排序"""
+        if not self.driver:
+            raise Exception("请先登录")
+
+        self.last_error = ""
+        try:
+            # 访问哔哩哔哩用户搜索页面
+            search_url = f"{self.SEARCH_URL}?keyword={quote(keyword)}&search_type=upuser"
+            self.driver.get(search_url)
+            time.sleep(3)
+
+            if self._is_login_page():
+                self.last_error = "当前账号未登录 Bilibili，无法执行搜索"
+                return []
+
+            # 等待用户结果加载
+            time.sleep(2)
+
+            # 收集up主信息
+            up_stats: dict[str, dict[str, Any]] = {}
+            scroll_count = 0
+            max_scrolls = 15
+
+            while scroll_count < max_scrolls:
+                # 尝试多种选择器获取up主卡片
+                up_cards = (
+                    self.driver.find_elements(By.CSS_SELECTOR, ".up-card-wrap") or
+                    self.driver.find_elements(By.CSS_SELECTOR, ".bili-up-user") or
+                    self.driver.find_elements(By.CSS_SELECTOR, "[class*='up-user']") or
+                    self.driver.find_elements(By.XPATH, '//a[contains(@href, "/up/")]') or
+                    self.driver.find_elements(By.XPATH, '//div[contains(@class, "up")]//a')
+                )
+
+                for card in up_cards:
+                    try:
+                        # 获取up主链接和ID
+                        href = card.get_attribute("href") or ""
+                        if not href or "/up/" not in href:
+                            continue
+
+                        parsed = urlparse(href)
+                        path = parsed.path.rstrip("/")
+                        parts = path.split("/")
+                        author_id = parts[-1] if parts else ""
+
+                        if not author_id:
+                            continue
+
+                        # 获取up主名称
+                        author = (
+                            card.get_attribute("title") or
+                            card.get_attribute("text") or
+                            card.text.strip() or
+                            author_id
+                        )
+                        # 清理名称
+                        if len(author) > 50:
+                            author = author[:50]
+
+                        # 获取粉丝数
+                        try:
+                            # 尝试在卡片内找粉丝数
+                            fan_elem = card.find_element(By.XPATH, ".//span[contains(text(), '粉丝') or contains(text(), 'Fans')]")
+                            fan_text = fan_elem.text if fan_elem else ""
+                            fans = self._parse_count(fan_text.replace("粉丝", "").replace(",", ""))
+                        except:
+                            fans = 0
+
+                        # 过滤非up主链接
+                        if self._should_filter_author(author):
+                            continue
+
+                        if author_id not in up_stats:
+                            up_stats[author_id] = {
+                                "author_id": author_id,
+                                "author": author,
+                                "fans": fans,
+                                "total_posts": 0,
+                                "posts": [],
+                            }
+
+                        # 更新粉丝数（取最大值）
+                        if fans > up_stats[author_id]["fans"]:
+                            up_stats[author_id]["fans"] = fans
+
+                    except Exception:
+                        continue
+
+                # 检查是否已收集到足够多的up主
+                if len(up_stats) >= limit * 2:
+                    break
+
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(1, 2))
+                scroll_count += 1
+
+            # 按粉丝数排序
+            influencers = list(up_stats.values())
+            influencers.sort(key=lambda x: x.get("fans", 0), reverse=True)
+
+            # 返回调试信息
+            debug_info = []
+            for inf in influencers[:10]:
+                debug_info.append({
+                    "author": inf["author"],
+                    "fans": inf["fans"],
+                })
+
+            # 返回结果
+            result = []
+            for inf in influencers[:limit]:
+                result.append({
+                    "author_id": inf["author_id"],
+                    "author": inf["author"],
+                    "fans": inf["fans"],
+                    "total_posts": inf["total_posts"],
+                    "platform": "bilibili",
+                    "profile_url": f"https://space.bilibili.com/{inf['author_id']}",
+                })
+
+            if not result:
+                self.last_error = f"未找到博主。调试信息: {debug_info}"
+
+            return result
+        except Exception as exc:
+            self.last_error = f"搜索博主失败: {exc}"
+            return []
+
+    def _should_filter_author(self, author: str) -> bool:
+        """过滤不想要的作者"""
+        if not author:
+            return True
+        author_lower = author.lower()
+        filters = ["test", "测试", "官方", "admin", "bot"]
+        return any(f in author_lower for f in filters)
+
     def _parse_video_card(self, link, keyword: str) -> Optional[dict[str, Any]]:
         try:
             href = (link.get_attribute("href") or "").split("?")[0]

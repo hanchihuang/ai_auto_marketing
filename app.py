@@ -522,9 +522,11 @@ def search_influencers_page():
     influencers = []
     error_message = ""
     debug_info = ""
+    platform = "x"
     if selected_account_id and keyword:
         account = storage.get_xhs_account(selected_account_id)
-        logger.info(f"[搜索博主] 账号: {account}, 关键词: {keyword}")
+        platform = account.get("platform", "x") if account else "x"
+        logger.info(f"[搜索博主] 账号: {account}, 关键词: {keyword}, 平台: {platform}")
         if account and account["status"] == "online":
             try:
                 bot = ensure_logged_in_bot(account)
@@ -535,6 +537,8 @@ def search_influencers_page():
                     if hasattr(bot, "last_error") and bot.last_error:
                         error_message = bot.last_error
                     bot.close()
+                else:
+                    error_message = f"当前平台 ({PLATFORM_LABELS.get(platform, platform)}) 暂不支持博主搜索功能"
             except Exception as e:
                 logger.error(f"[搜索博主] 异常: {e}")
                 error_message = f"搜索出错: {str(e)}"
@@ -550,6 +554,7 @@ def search_influencers_page():
         influencers=influencers,
         error_message=error_message,
         debug_info=debug_info,
+        platform=platform,
     )
 
 
