@@ -123,6 +123,9 @@ def get_bot_for_platform(platform: str):
 
 
 def ensure_logged_in_bot(account: dict):
+    import logging
+    logger = logging.getLogger(__name__)
+
     account_id = account["id"]
     platform = account.get("platform", "x")
     if account_id in bots:
@@ -130,9 +133,16 @@ def ensure_logged_in_bot(account: dict):
 
     bot = get_bot_for_platform(platform)
     if not account.get("cookie"):
+        logger.warning(f"[ensure_logged_in_bot] 账号 {account_id} 没有 cookie")
         return None
-    if not bot.login_by_cookie(account["cookie"]):
-        return bot
+
+    login_success = bot.login_by_cookie(account["cookie"])
+    logger.info(f"[ensure_logged_in_bot] 账号 {account_id} 登录结果: {login_success}, last_error: {getattr(bot, 'last_error', 'N/A')}")
+
+    if not login_success:
+        # 登录失败，返回 None 让调用方知道需要重新登录
+        return None
+
     bots[account_id] = bot
     return bot
 
