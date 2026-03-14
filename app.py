@@ -517,13 +517,18 @@ def search_influencers_page():
     selected_account = storage.get_xhs_account(selected_account_id) if selected_account_id else None
 
     influencers = []
+    error_message = ""
     if selected_account_id and keyword:
         account = storage.get_xhs_account(selected_account_id)
         if account and account["status"] == "online":
             bot = ensure_logged_in_bot(account)
             if bot and hasattr(bot, "search_top_influencers"):
                 influencers = bot.search_top_influencers(keyword, limit=20)
+                if hasattr(bot, "last_error") and bot.last_error:
+                    error_message = bot.last_error
                 bot.close()
+        elif account and account["status"] != "online":
+            error_message = "账号未在线，请先在账号管理中验证登录状态"
 
     return render_template(
         "search_influencers.html",
@@ -532,6 +537,7 @@ def search_influencers_page():
         keyword=keyword,
         accounts=accounts,
         influencers=influencers,
+        error_message=error_message,
     )
 
 

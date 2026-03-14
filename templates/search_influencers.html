@@ -98,6 +98,9 @@
         {% if keyword %}
         <div class="card">
             <h2>「{{ keyword }}」领域热门博主 (共 {{ influencers|length }} 位)</h2>
+            {% if error_message %}
+            <div class="alert alert-error">{{ error_message }}</div>
+            {% endif %}
             {% if influencers %}
             <div class="influencer-list">
                 {% for inf in influencers %}

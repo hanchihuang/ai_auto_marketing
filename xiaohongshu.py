@@ -285,18 +285,27 @@ class XiaohongshuBot:
 
         self.last_error = ""
         try:
-            # 搜索关键词相关内容
-            self.driver.get(f"{self.BASE_URL}/search?q={quote(keyword)}&src=typed_query&f=live")
+            # 使用热门搜索，不用 f=live（最新），用 f=top 或不带参数（综合）
+            self.driver.get(f"{self.BASE_URL}/search?q={quote(keyword)}&src=typed_query")
             time.sleep(5)
 
             if self._is_login_page():
                 self.last_error = "当前账号未登录 X.com，无法执行搜索"
                 return []
 
+            # 切换到热门标签（如果有的话）
+            try:
+                top_tab = self.driver.find_element(By.XPATH, '//a[contains(@href, "f=top") or contains(text(), "热门")]')
+                if top_tab:
+                    top_tab.click()
+                    time.sleep(3)
+            except Exception:
+                pass
+
             # 收集帖子和作者信息
             author_stats: dict[str, dict[str, Any]] = {}
             scroll_count = 0
-            max_scrolls = 15
+            max_scrolls = 20
 
             while scroll_count < max_scrolls:
                 articles = self.driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
@@ -306,7 +315,7 @@ class XiaohongshuBot:
                         continue
                     author_id = post.get("author_id", "")
                     author_name = post.get("author", "")
-                    if not author_id or self._should_filter_author(author_name):
+                    if not author_id or not author_name or self._should_filter_author(author_name):
                         continue
 
                     if author_id not in author_stats:
@@ -361,7 +370,10 @@ class XiaohongshuBot:
     def _parse_tweet_for_influencer(self, article, keyword: str) -> Optional[dict[str, Any]]:
         """解析推文用于博主分析"""
         try:
+            # 获取推文内容
             text = self._find_within(article, [(By.CSS_SELECTOR, '[data-testid="tweetText"]')])
+
+            # 获取推文链接
             post_link = self._find_attr_within(
                 article,
                 [(By.XPATH, './/a[contains(@href, "/status/")]')],
@@ -374,17 +386,47 @@ class XiaohongshuBot:
             path = parsed.path.rstrip("/")
             post_id = path.split("/")[-1]
             author_id = path.split("/")[1] if len(path.split("/")) > 2 else ""
-            author = self._find_within(
-                article,
-                [
-                    (By.CSS_SELECTOR, '[data-testid="User-Name"]'),
-                    (By.XPATH, './/div[@data-testid="User-Name"]'),
-                ],
-            )
 
+            # 尝试多种方式获取作者名
+            author = ""
+            try:
+                # 方法1: 查找链接中的用户名（链接中的 @username）
+                user_links = article.find_elements(By.XPATH, './/a[contains(@href, "/") and not(contains(@href, "/status/")) and not(contains(@href, "?"))]')
+                for link in user_links:
+                    href = link.get_attribute("href") or ""
+                    if "/" in href and "x.com" in href.lower():
+                        parts = href.rstrip("/").split("/")
+                        if len(parts) >= 4:  # https://x.com/username
+                            author = parts[-1]
+                            break
+            except Exception:
+                pass
+
+            # 方法2: 如果链接中没有找到，尝试从 User-Name 元素获取
+            if not author:
+                author = self._find_within(
+                    article,
+                    [
+                        (By.CSS_SELECTOR, '[data-testid="User-Name"]'),
+                        (By.XPATH, './/div[@data-testid="User-Name"]'),
+                        (By.CSS_SELECTOR, '[data-testid="User-Name"] span'),
+                    ],
+                )
+
+            # 方法3: 从 article 的文本中提取第一个 @mention
+            if not author:
+                import re
+                mentions = re.findall(r'@(\w+)', article.text)
+                if mentions:
+                    author = mentions[0]
+
+            # 解析点赞数
             metric_text = article.text
             likes = self._extract_metric(metric_text, "like")
             comments = self._extract_metric(metric_text, "repl")
+
+            if not author:
+                return None
 
             return {
                 "post_id": post_id,
