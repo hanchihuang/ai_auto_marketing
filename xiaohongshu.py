@@ -278,6 +278,85 @@ class XiaohongshuBot:
             self.last_error = f"搜索失败: {exc}"
             return []
 
+    def get_user_posts(self, username: str, limit: int = 20) -> list[dict[str, Any]]:
+        """获取指定用户的最近帖子"""
+        if not self.driver:
+            raise Exception("请先登录")
+
+        self.last_error = ""
+        try:
+            # 访问用户主页
+            user_url = f"{self.BASE_URL}/{username.lstrip('@')}"
+            self.driver.get(user_url)
+            time.sleep(5)
+
+            if self._is_login_page():
+                self.last_error = "当前账号未登录 X.com，无法获取用户帖子"
+                return []
+
+            posts: list[dict[str, Any]] = []
+            scroll_count = 0
+            seen_ids: set[str] = set()
+
+            while len(posts) < limit and scroll_count < 15:
+                articles = self.driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
+                for article in articles:
+                    post = self._parse_tweet_simple(article)
+                    if not post or post["post_id"] in seen_ids:
+                        continue
+                    seen_ids.add(post["post_id"])
+                    posts.append(post)
+                    if len(posts) >= limit:
+                        break
+
+                if len(posts) >= limit:
+                    break
+
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(*self.config.get("scroll_delay", (2, 4))))
+                scroll_count += 1
+
+            return posts[:limit]
+        except Exception as exc:
+            self.last_error = f"获取用户帖子失败: {exc}"
+            return []
+
+    def _parse_tweet_simple(self, article) -> Optional[dict[str, Any]]:
+        """简化版推文解析"""
+        try:
+            text = self._find_within(article, [(By.CSS_SELECTOR, '[data-testid="tweetText"]')])
+            post_link = self._find_attr_within(
+                article,
+                [(By.XPATH, './/a[contains(@href, "/status/")]')],
+                "href",
+            )
+            if not post_link:
+                return None
+
+            parsed = urlparse(post_link)
+            path = parsed.path.rstrip("/")
+            post_id = path.split("/")[-1]
+            author_id = path.split("/")[1] if len(path.split("/")) > 2 else ""
+
+            metric_text = article.text
+            likes = self._extract_metric(metric_text, "like")
+            comments = self._extract_metric(metric_text, "repl")
+
+            content = text or ""
+            title = (content[:80] + "...") if len(content) > 80 else (content or f"推文 {post_id}")
+
+            return {
+                "post_id": post_id,
+                "title": title,
+                "content": content,
+                "author_id": author_id,
+                "likes": likes,
+                "comments": comments,
+                "url": post_link,
+            }
+        except Exception:
+            return None
+
     def _should_filter_author(self, author_name: str) -> bool:
         """检查作者名是否应该被过滤（包含 Sober/sober）"""
         if not author_name:

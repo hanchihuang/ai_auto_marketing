@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户帖子营销 - 多平台自动营销系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #ff2442 0%, #ff6b6b 100%); color: white; padding: 20px 0; margin-bottom: 20px; }
+        header h1 { font-size: 24px; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav a { padding: 10px 20px; background: white; color: #333; text-decoration: none; border-radius: 8px; font-weight: 500; }
+        .nav a:hover, .nav a.active { background: #ff2442; color: white; }
+        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card h2 { font-size: 18px; margin-bottom: 20px; border-bottom: 2px solid #f0f0f0; padding-bottom: 12px; }
+        .alerts { display: grid; gap: 12px; margin-bottom: 20px; }
+        .alert { padding: 14px 16px; border-radius: 10px; border: 1px solid transparent; font-size: 14px; }
+        .alert-error { background: #fff2f0; color: #a8071a; border-color: #ffccc7; }
+        .alert-warning { background: #fffbe6; color: #ad6800; border-color: #ffe58f; }
+        .alert-success { background: #f6ffed; color: #237804; border-color: #b7eb8f; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 500; }
+        .form-group input, .form-group select { width: 100%; padding: 10px 14px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
+        .form-group input:focus { border-color: #ff2442; outline: none; }
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; cursor: pointer; border: none; }
+        .btn-primary { background: #ff2442; color: white; }
+        .btn-primary:hover { background: #e6203b; }
+        .btn-secondary { background: #f0f0f0; color: #333; }
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+        .help-text { font-size: 12px; color: #999; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>多平台自动营销系统</h1>
+        </div>
+    </header>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">仪表盘</a>
+            <a href="/accounts">账号管理</a>
+            <a href="/search">内容搜索</a>
+            <a href="/comments">回复任务</a>
+            <a href="/user-posts" class="active">用户帖子营销</a>
+            <a href="/products">产品管理</a>
+        </nav>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="alerts">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="card">
+            <h2>指定用户帖子批量评论</h2>
+            <form method="post" action="/user-posts/comment">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>选择账号 *</label>
+                        <select name="account_id" required>
+                            {% for account in accounts %}
+                            <option value="{{ account.id }}" {% if account.id == default_account_id %}selected{% endif %}>
+                                {{ account.phone }} ({{ platform_labels.get(account.platform, account.platform) }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>选择产品 *</label>
+                        <select name="product_id" required>
+                            {% for product in products %}
+                            <option value="{{ product.id }}">{{ product.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>目标用户 *</label>
+                        <input type="text" name="username" placeholder="X.com输入用户名(如Elon Musk)，B站输入UID(如12345678)" required>
+                        <div class="help-text">X.com输入@后面的用户名，B站输入数字UID</div>
+                    </div>
+                    <div class="form-group">
+                        <label>评论策略</label>
+                        <select name="strategy">
+                            <option value="soft">软性推荐</option>
+                            <option value="hard">硬性推广</option>
+                            <option value="question">提问引导</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>最大评论数</label>
+                        <input type="number" name="max_comments" value="10" min="1" max="50">
+                        <div class="help-text">最多评论多少条帖子</div>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">开始营销</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>功能说明</h2>
+            <p style="color: #666; line-height: 1.8;">
+                1. 选择已登录的账号（必须在线状态）<br>
+                2. 选择要推广的产品<br>
+                3. 输入目标用户的用户名或UID<br>
+                &nbsp;&nbsp;- X.com: 输入用户名（不含@），如 <code>ElonMusk</code><br>
+                &nbsp;&nbsp;- 哔哩哔哩: 输入数字UID，如 <code>12345678</code><br>
+                4. 选择评论策略和最大评论数量<br>
+                5. 系统会自动获取该用户的最近帖子并批量评论
+            </p>
+        </div>
+    </div>
+</body>
+</html>

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import random
 import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -555,6 +556,139 @@ def comments_page():
         platform_labels=PLATFORM_LABELS,
         status=status,
     )
+
+
+# ==================== 用户帖子营销 ====================
+
+@app.get("/user-posts")
+def user_posts_page():
+    """指定用户帖子营销页面"""
+    account_id = request.args.get("account_id", type=int)
+    accounts = storage.list_xhs_accounts()
+    default_account_id = get_default_account_id(accounts)
+    selected_account_id = account_id or default_account_id
+    selected_account = storage.get_xhs_account(selected_account_id) if selected_account_id else None
+    current_platform = selected_account.get("platform", "x") if selected_account else "x"
+    products = storage.list_products()
+
+    return render_template(
+        "user_posts.html",
+        accounts=accounts,
+        default_account_id=selected_account_id,
+        current_platform=current_platform,
+        platform_labels=PLATFORM_LABELS,
+        products=products,
+    )
+
+
+@app.post("/user-posts/comment")
+def user_posts_comment():
+    """对指定用户的帖子进行批量评论"""
+    account_id = request.form.get("account_id", type=int)
+    product_id = request.form.get("product_id", type=int)
+    target_username = request.form.get("username", "").strip()
+    strategy = request.form.get("strategy", "soft")
+    max_comments = request.form.get("max_comments", "10").strip()
+
+    if not account_id:
+        flash("请选择账号", "error")
+        return redirect(url_for("user_posts_page"))
+
+    if not target_username:
+        flash("请输入目标用户名", "error")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    if not product_id:
+        flash("请选择产品", "error")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    try:
+        max_comments_value = max(1, min(int(max_comments), 50))
+    except ValueError:
+        flash("评论数量必须是数字", "error")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    account = storage.get_xhs_account(account_id)
+    if not account or account["status"] != "online":
+        flash("账号未登录", "error")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    product = storage.get_product(product_id)
+    if not product:
+        flash("产品不存在", "error")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    platform = account.get("platform", "x")
+    platform_label = PLATFORM_LABELS.get(platform, platform)
+
+    bot = ensure_logged_in_bot(account)
+    if bot is None:
+        flash("账号缺少可用登录信息", "error")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    # 获取用户帖子
+    try:
+        if platform == "x":
+            posts = bot.get_user_posts(target_username, limit=50)
+        elif platform == "bilibili":
+            # B站使用数字UID
+            posts = bot.get_user_posts(target_username, limit=50)
+        else:
+            flash(f"暂不支持 {platform_label} 的用户帖子获取", "error")
+            return redirect(url_for("user_posts_page", account_id=account_id))
+    except Exception as e:
+        flash(f"获取用户帖子失败: {e}", "error")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    if not posts:
+        flash(f"未找到用户 @{target_username} 的帖子", "warning")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    # 过滤已评论的帖子
+    existing_tasks = storage.list_xhs_comment_tasks(status="success", platform=platform)
+    commented_post_ids = {t["post_id"] for t in existing_tasks}
+    posts_to_comment = [p for p in posts if p["post_id"] not in commented_post_ids]
+
+    if not posts_to_comment:
+        flash(f"用户 @{target_username} 的帖子都已经营销过了", "warning")
+        return redirect(url_for("user_posts_page", account_id=account_id))
+
+    # 执行评论
+    success_count = 0
+    failed_count = 0
+
+    for post in posts_to_comment[:max_comments_value]:
+        comment_gen = get_comment_generator(product)
+        comment_text = comment_gen.generate_comment(CommentStrategy(strategy))
+
+        success = bot.comment_post(post["post_id"], comment_text, post.get("url", ""))
+        error_message = "" if success else (bot.last_error or "回复失败")
+
+        storage.insert_xhs_comment_task({
+            "post_id": post["post_id"],
+            "platform": platform,
+            "post_title": post.get("title", ""),
+            "content": comment_text,
+            "strategy": strategy,
+            "status": "success" if success else "failed",
+            "error_message": error_message,
+            "commented_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S") if success else "",
+        })
+
+        if success:
+            success_count += 1
+        else:
+            failed_count += 1
+            # 检测评论冷却
+            if "cd时间" in error_message or "不能评论" in error_message or "请稍后再试" in error_message:
+                print(f"[{platform_label}] 检测到评论冷却，停止批量任务")
+                break
+
+        time.sleep(random.uniform(3, 8))
+
+    flash(f"用户 @{target_username} 帖子营销完成，成功 {success_count} 条，失败 {failed_count} 条",
+          "success" if success_count > 0 else "warning")
+    return redirect(url_for("user_posts_page", account_id=account_id))
 
 
 @app.get("/comments/batch")

@@ -259,6 +259,85 @@ class BilibiliBot:
         except Exception:
             return False
 
+    def get_user_posts(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """获取指定用户的最近帖子"""
+        if not self.driver:
+            raise Exception("请先登录")
+
+        self.last_error = ""
+        try:
+            # 访问用户空间页面
+            user_url = f"https://space.bilibili.com/{user_id}"
+            self.driver.get(user_url)
+            time.sleep(3)
+
+            posts: list[dict[str, Any]] = []
+            scroll_count = 0
+            seen_ids: set[str] = set()
+
+            while len(posts) < limit and scroll_count < 15:
+                # 尝试查找视频卡片
+                video_items = self.driver.find_elements(By.CSS_SELECTOR, ".video-card")
+                if not video_items:
+                    video_items = self.driver.find_elements(By.CSS_SELECTOR, ".cube-list-item")
+
+                for item in video_items:
+                    try:
+                        # 获取视频链接
+                        link_el = item.find_elements(By.CSS_SELECTOR, "a[href*='/video/']")
+                        if not link_el:
+                            continue
+                        link = link_el[0].get_attribute("href")
+                        if not link:
+                            continue
+
+                        # 提取视频ID
+                        import re
+                        match = re.search(r'/video/([BbVv]+[\w]+)', link)
+                        if not match:
+                            continue
+                        bvid = match.group(1)
+
+                        if bvid in seen_ids:
+                            continue
+                        seen_ids.add(bvid)
+
+                        # 获取标题
+                        title_el = item.find_elements(By.CSS_SELECTOR, ".title, .video-title")
+                        title = title_el[0].text if title_el else ""
+
+                        # 获取播放量
+                        play_el = item.find_elements(By.CSS_SELECTOR, ".play, .stat-item")
+                        play_text = play_el[0].text if play_el else "0"
+
+                        posts.append({
+                            "post_id": bvid,
+                            "title": title[:100] if title else f"视频 {bvid}",
+                            "content": title,
+                            "author_id": user_id,
+                            "likes": 0,
+                            "comments": 0,
+                            "url": link,
+                        })
+
+                        if len(posts) >= limit:
+                            break
+                    except Exception:
+                        continue
+
+                if len(posts) >= limit:
+                    break
+
+                # 滚动加载更多
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(2)
+                scroll_count += 1
+
+            return posts[:limit]
+        except Exception as exc:
+            self.last_error = f"获取用户帖子失败: {exc}"
+            return []
+
     def comment_post(self, post_id: str, content: str, post_url: str = "") -> bool:
         if not self.driver:
             raise Exception("请先登录")
