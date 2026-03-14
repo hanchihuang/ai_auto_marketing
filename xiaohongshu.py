@@ -285,17 +285,35 @@ class XiaohongshuBot:
 
         self.last_error = ""
         try:
-            # 使用热门搜索，不用 f=live（最新），用 f=top 或不带参数（综合）
-            self.driver.get(f"{self.BASE_URL}/search?q={quote(keyword)}&src=typed_query")
+            # 方式1: 直接访问搜索 URL
+            search_url = f"{self.BASE_URL}/search?q={quote(keyword)}&src=typed_query"
+            self.driver.get(search_url)
             time.sleep(6)
 
             if self._is_login_page():
                 self.last_error = "当前账号未登录 X.com，无法执行搜索"
                 return []
 
+            # 检查页面是否正常加载了搜索结果
+            page_source = self.driver.page_source
+            if "搜索" not in page_source and "Search" not in page_source:
+                # 方式2: 如果 URL 方式失败，尝试手动点击搜索框并输入
+                try:
+                    # 找到搜索框并点击
+                    search_input = self.driver.find_element(By.CSS_SELECTOR, 'input[aria-label="Search"]')
+                    search_input.click()
+                    time.sleep(2)
+                    # 输入关键词
+                    search_input.clear()
+                    search_input.send_keys(keyword)
+                    search_input.send_keys(Keys.RETURN)
+                    time.sleep(5)
+                except Exception as e:
+                    pass
+
             # 切换到热门标签（如果有的话）
             try:
-                top_tab = self.driver.find_element(By.XPATH, '//a[contains(@href, "f=top") or contains(text(), "热门")]')
+                top_tab = self.driver.find_element(By.XPATH, '//a[contains(@href, "f=top") or contains(text(), "热门") or contains(text(), "Top")]')
                 if top_tab:
                     top_tab.click()
                     time.sleep(3)
