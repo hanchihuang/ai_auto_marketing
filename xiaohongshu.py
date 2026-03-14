@@ -290,26 +290,46 @@ class XiaohongshuBot:
             self.driver.get(search_url)
             time.sleep(6)
 
+            # 记录当前 URL 用于调试
+            current_url = self.driver.current_url
+            print(f"[搜索博主] 当前URL: {current_url}")
+
             if self._is_login_page():
                 self.last_error = "当前账号未登录 X.com，无法执行搜索"
                 return []
 
             # 检查页面是否正常加载了搜索结果
             page_source = self.driver.page_source
+            print(f"[搜索博主] 页面包含搜索: {'Search' in page_source or '搜索' in page_source}")
             if "搜索" not in page_source and "Search" not in page_source:
                 # 方式2: 如果 URL 方式失败，尝试手动点击搜索框并输入
                 try:
-                    # 找到搜索框并点击
-                    search_input = self.driver.find_element(By.CSS_SELECTOR, 'input[aria-label="Search"]')
-                    search_input.click()
-                    time.sleep(2)
-                    # 输入关键词
-                    search_input.clear()
-                    search_input.send_keys(keyword)
-                    search_input.send_keys(Keys.RETURN)
-                    time.sleep(5)
+                    # 尝试多种搜索框选择器
+                    search_selectors = [
+                        'input[aria-label="Search"]',
+                        'input[data-testid="SearchBox_Input"]',
+                        'input[placeholder*="Search"]',
+                        'input[placeholder*="搜索"]',
+                        'input[type="text"][role="combobox"]',
+                    ]
+                    search_input = None
+                    for selector in search_selectors:
+                        try:
+                            search_input = self.driver.find_element(By.CSS_SELECTOR, selector)
+                            if search_input:
+                                break
+                        except:
+                            continue
+                    
+                    if search_input:
+                        search_input.click()
+                        time.sleep(2)
+                        search_input.clear()
+                        search_input.send_keys(keyword)
+                        search_input.send_keys(Keys.RETURN)
+                        time.sleep(5)
                 except Exception as e:
-                    pass
+                    self.last_error = f"自动输入搜索词失败: {e}"
 
             # 切换到热门标签（如果有的话）
             try:
