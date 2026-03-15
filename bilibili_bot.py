@@ -312,7 +312,7 @@ class BilibiliBot:
                             return user.id && user.name;
                         });
 
-                        return JSON.stringify(users);
+                        return JSON.stringify(normalized);
                     """)
 
                     if js_data and js_data.strip():
