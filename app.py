@@ -16,6 +16,7 @@ from pathlib import Path
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
 
+from env_loader import load_local_env
 from storage import Storage
 from bilibili_bot import BilibiliBot
 from xiaohongshu import XiaohongshuBot, CommentGenerator, CommentStrategy, Product
@@ -36,6 +37,7 @@ from tardis_marketing import (
 
 
 BASE_DIR = Path(__file__).resolve().parent
+load_local_env(BASE_DIR / ".env")
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 storage = Storage(BASE_DIR / "data" / "marketing.db")
@@ -546,6 +548,7 @@ def search_influencers_page():
                     logger.info(f"[搜索博主] 搜索完成，结果数: {len(influencers)}, last_error: {getattr(bot, 'last_error', 'N/A')}")
                     if hasattr(bot, "last_error") and bot.last_error:
                         error_message = bot.last_error
+                    bots.pop(account["id"], None)
                     bot.close()
                 else:
                     error_message = f"当前平台 ({PLATFORM_LABELS.get(platform, platform)}) 暂不支持博主搜索功能"

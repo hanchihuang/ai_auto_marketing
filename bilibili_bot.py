@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 from datetime import datetime
 from typing import Any, Optional
@@ -25,11 +26,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from xiaohongshu import XiaohongshuAccount
+from vision_client import VisionLLMClient
 
 
 class BilibiliBot:
     BASE_URL = "https://www.bilibili.com"
     SEARCH_URL = "https://search.bilibili.com/all"
+    # up主搜索URL - 可以直接按粉丝数排序
+    UPUSER_SEARCH_URL = "https://search.bilibili.com/upuser"
     FAST_MODE = True
 
     def __init__(self) -> None:
@@ -37,6 +41,7 @@ class BilibiliBot:
         self.account: Optional[XiaohongshuAccount] = None
         self.last_error = ""
         self.cookie_string = ""
+        self.vision_client = VisionLLMClient()
 
     def init_driver(self, headless: bool = False) -> None:
         options = Options()
@@ -85,15 +90,44 @@ class BilibiliBot:
 
         try:
             self.cookie_string = cookie
-            self.driver.get(self.BASE_URL)
-            time.sleep(1)
-            for item in self._parse_cookie_string(cookie):
-                self.driver.add_cookie(item)
-
+            # 先清除旧 cookie
+            self.driver.delete_all_cookies()
             self.driver.get(self.BASE_URL)
             time.sleep(2)
 
+            for item in self._parse_cookie_string(cookie):
+                self.driver.add_cookie(item)
+
+            # 刷新页面让 cookie 生效
+            self.driver.get(self.BASE_URL)
+            time.sleep(3)
+
+            # 增强的登录检测
             if self._is_login_page():
+                # 尝试检查页面中是否有登录按钮
+                try:
+                    login_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".header-login")
+                    if not login_buttons:
+                        # 可能是登录状态但页面结构变化
+                        avatar = self.driver.find_elements(By.CSS_SELECTOR, ".header-avatar-wrap, .bili-avatar, .user-panel .avatar")
+                        if avatar:
+                            # 实际已登录
+                            nickname = self._safe_text(
+                                [
+                                    (By.CSS_SELECTOR, ".header-username"),
+                                    (By.CSS_SELECTOR, ".user-name"),
+                                    (By.CSS_SELECTOR, ".username"),
+                                ]
+                            )
+                            self.account = XiaohongshuAccount(
+                                cookie=cookie,
+                                nickname=nickname or "B站用户",
+                                status="online",
+                                last_login=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            )
+                            return True
+                except Exception:
+                    pass
                 self.last_error = "Bilibili Cookie 登录失败，请重新复制浏览器 Cookie"
                 return False
 
@@ -101,11 +135,13 @@ class BilibiliBot:
                 [
                     (By.CSS_SELECTOR, ".header-entry-mini"),
                     (By.CSS_SELECTOR, ".header-avatar-wrap"),
+                    (By.CSS_SELECTOR, ".bili-avatar"),
+                    (By.CSS_SELECTOR, ".user-name"),
                 ]
             )
             self.account = XiaohongshuAccount(
                 cookie=cookie,
-                nickname=nickname,
+                nickname=nickname or "B站用户",
                 status="online",
                 last_login=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
@@ -144,27 +180,65 @@ class BilibiliBot:
 
         self.last_error = ""
         try:
-            self.driver.get(f"{self.SEARCH_URL}?keyword={quote(keyword)}")
-            time.sleep(2)
+            # 增强 URL 构建
+            search_url = f"{self.SEARCH_URL}?keyword={quote(keyword)}&search_type=video&_platform=web"
+            self.driver.get(search_url)
+            time.sleep(3)
+
+            # 检查是否被重定向到登录页
+            if self._is_login_page():
+                self.last_error = "当前账号未登录 Bilibili，无法执行搜索"
+                return []
+
+            # 等待搜索结果加载
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/video/BV']"))
+                )
+            except Exception:
+                # 可能没有结果或页面结构变化
+                pass
 
             posts: list[dict[str, Any]] = []
             seen_ids: set[str] = set()
             scroll_count = 0
 
-            while len(posts) < limit and scroll_count < 4:
-                cards = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/video/BV']")
-                for card in cards:
-                    post = self._parse_video_card(card, keyword)
-                    if not post or post["post_id"] in seen_ids:
-                        continue
-                    seen_ids.add(post["post_id"])
-                    posts.append(post)
-                    if len(posts) >= limit:
-                        break
+            while len(posts) < limit and scroll_count < 6:
+                # 尝试多种选择器获取视频卡片
+                try:
+                    cards = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/video/BV']")
+                except Exception:
+                    cards = []
 
+                # 如果没有找到，尝试其他选择器
+                if not cards:
+                    try:
+                        cards = self.driver.find_elements(By.CSS_SELECTOR, ".video-card a, .video-item a, .bili-video-card a")
+                    except Exception:
+                        cards = []
+
+                for card in cards:
+                    try:
+                        post = self._parse_video_card(card, keyword)
+                        if not post or post["post_id"] in seen_ids:
+                            continue
+                        seen_ids.add(post["post_id"])
+                        posts.append(post)
+                        if len(posts) >= limit:
+                            break
+                    except Exception:
+                        continue
+
+                if len(posts) >= limit:
+                    break
+
+                # 滚动加载更多
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(random.uniform(0.8, 1.5))
+                time.sleep(random.uniform(1, 2))
                 scroll_count += 1
+
+            if not posts:
+                self.last_error = f"未找到关键词'{keyword}'相关的视频内容"
 
             return posts[:limit]
         except Exception as exc:
@@ -172,140 +246,177 @@ class BilibiliBot:
             return []
 
     def search_top_influencers(self, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
-        """搜索关键词领域最受欢迎的博主，按粉丝数/影响力排序"""
+        """搜索关键词领域最受欢迎的博主，按粉丝数排序
+
+        使用 B 站 up主搜索页面：https://search.bilibili.com/upuser
+        """
         if not self.driver:
             raise Exception("请先登录")
 
         self.last_error = ""
         try:
-            # 1. 先访问搜索页面
-            self.driver.get(self.SEARCH_URL)
-            time.sleep(2)
+            upuser_url = f"{self.UPUSER_SEARCH_URL}?keyword={quote(keyword)}&order=fans"
+            self.driver.get(upuser_url)
+            time.sleep(5)  # 等待页面完全加载
 
             if self._is_login_page():
                 self.last_error = "当前账号未登录 Bilibili，无法执行搜索"
                 return []
 
-            # 2. 找到搜索框并输入关键词
-            search_selectors = [
-                (By.CSS_SELECTOR, "input[placeholder*='搜索']"),
-                (By.CSS_SELECTOR, "input.nav-search-input"),
-                (By.CSS_SELECTOR, "input#search-keyword"),
-                (By.XPATH, "//input[contains(@placeholder, '搜索')]"),
-            ]
-            search_input = self._find_clickable(search_selectors, timeout=5)
-            if search_input:
-                search_input.clear()
-                search_input.send_keys(keyword)
-                search_input.send_keys("\n")
-                time.sleep(3)
-            else:
-                # 直接用 URL 搜索
-                self.driver.get(f"{self.SEARCH_URL}?keyword={quote(keyword)}")
-                time.sleep(3)
+            print(f"[B站博主搜索] 访问: {self.driver.current_url}")
 
-            # 3. 点击「用户」tab 切换到用户搜索结果
-            user_tab_selectors = [
-                (By.XPATH, '//span[contains(text(), "用户")]/ancestor::a[@data-type="bili_user"]'),
-                (By.XPATH, '//a[contains(@data-type, "bili_user")]'),
-                (By.XPATH, '//a[contains(@href, "search_type=bili_user")]'),
-                (By.XPATH, '//div[contains(@class, "filter")]//span[text()="用户"]/ancestor::a'),
-                (By.CSS_SELECTOR, 'a[data-type="bili_user"]'),
-                (By.XPATH, '//span[text()="用户"]/ancestor::a[1]'),
-            ]
-            user_tab = self._find_clickable(user_tab_selectors, timeout=5)
-            if user_tab:
-                print(f"[B站博主搜索] 点击用户tab: {user_tab.get_attribute('href')}")
-                user_tab.click()
-                time.sleep(3)
-            else:
-                print(f"[B站博主搜索] 未找到用户tab，尝试直接访问用户搜索URL")
-                self.driver.get(f"{self.SEARCH_URL}?keyword={quote(keyword)}&search_type=bili_user")
-                time.sleep(3)
-
-            # 4. 滚动加载更多用户
             up_stats: dict[str, dict[str, Any]] = {}
             scroll_count = 0
-            max_scrolls = 15
+            max_scrolls = 8
 
             while scroll_count < max_scrolls:
-                # 等待页面加载
                 time.sleep(1)
 
-                # 获取用户列表项
-                user_items = (
-                    self.driver.find_elements(By.CSS_SELECTOR, ".bili-user-list-item") or
-                    self.driver.find_elements(By.CSS_SELECTOR, ".user-list-item") or
-                    self.driver.find_elements(By.CSS_SELECTOR, "[class*='user-list'] a") or
-                    self.driver.find_elements(By.XPATH, '//a[contains(@href, "/space/")]')
-                )
-
-                print(f"[B站博主搜索] 第 {scroll_count} 次滚动，获取到 {len(user_items)} 个用户元素")
-
-                for item in user_items:
-                    try:
-                        href = item.get_attribute("href") or ""
-                        if not href or "/space/" not in href:
-                            continue
-
-                        # 从 URL 提取用户 ID
-                        parsed = urlparse(href)
-                        path = parsed.path.rstrip("/")
-                        author_id = path.split("/")[-1]
-
-                        if not author_id:
-                            continue
-
-                        # 获取用户名
-                        name_elem = item.find_element(By.CSS_SELECTOR, ".user-name") or item
-                        author = (name_elem.text or author_id).strip()
-
-                        # 过滤太短的名字
-                        if len(author) < 2:
-                            continue
-
-                        # 获取粉丝数
-                        fans = 0
-                        try:
-                            fan_elem = item.find_element(By.XPATH, './/span[contains(text(), "粉丝")]')
-                            fan_text = fan_elem.text if fan_elem else ""
-                            fans = self._parse_count(fan_text.replace("粉丝", "").replace(",", ""))
-                        except:
-                            pass
-
-                        # 过滤
-                        if self._should_filter_author(author):
-                            continue
-
-                        if author_id not in up_stats:
-                            up_stats[author_id] = {
-                                "author_id": author_id,
-                                "author": author,
-                                "fans": fans,
-                                "total_posts": 0,
-                                "posts": [],
+                # 方法1: 直接读取页面运行时状态对象
+                try:
+                    js_data = self.driver.execute_script("""
+                        function pickUserModule(searchAllResponse) {
+                            if (!searchAllResponse) return null;
+                            var modules = Array.isArray(searchAllResponse.result) ? searchAllResponse.result : [];
+                            for (var i = 0; i < modules.length; i++) {
+                                var item = modules[i] || {};
+                                if (item.result_type === 'bili_user' || item.result_type === 'upuser') {
+                                    return item;
+                                }
                             }
-                        else:
-                            if fans > up_stats[author_id]["fans"]:
-                                up_stats[author_id]["fans"] = fans
+                            return null;
+                        }
 
+                        var searchAllResponse =
+                            window.__pinia?.searchResponse?.searchAllResponse ||
+                            window.__pinia?.state?.value?.searchResponse?.searchAllResponse ||
+                            window.__INITIAL_STATE__?.searchResponse?.searchAllResponse ||
+                            null;
+                        var module = pickUserModule(searchAllResponse);
+                        var users = module && Array.isArray(module.data) ? module.data : [];
+                        if ((!users || users.length === 0) && searchAllResponse?.egg_hit?.result) {
+                            users = searchAllResponse.egg_hit.result;
+                        }
+
+                        var normalized = users.map(function(user) {
+                            var mid = user.mid || user.uid || user.id || '';
+                            return {
+                                id: String(mid || ''),
+                                name: user.uname || user.name || '',
+                                fans: Number(user.fans || 0),
+                                videos: Number(user.videos || 0),
+                                href: mid ? ('https://space.bilibili.com/' + mid) : '',
+                                sample_title: user.res && user.res[0] ? (user.res[0].title || '') : '',
+                            };
+                        }).filter(function(user) {
+                            return user.id && user.name;
+                        });
+
+                        return JSON.stringify(users);
+                    """)
+
+                    if js_data and js_data.strip():
+                        try:
+                            users_data = json.loads(js_data)
+                            if users_data and len(users_data) > 0:
+                                print(f"[B站博主搜索] 从JS获取到 {len(users_data)} 个用户")
+                                for u in users_data:
+                                    author_id = u.get('id', '')
+                                    author = self._clean_text(u.get('name', author_id))
+                                    fans = u.get('fans', 0)
+                                    videos = u.get('videos', 0)
+                                    href = u.get('href', '')
+                                    sample_title = self._clean_text(u.get('sample_title', ''))
+
+                                    if author_id and author and self._should_filter_author(author) is False:
+                                        record = up_stats.setdefault(author_id, {
+                                            "author_id": author_id,
+                                            "author": author,
+                                            "fans": 0,
+                                            "total_posts": 0,
+                                            "posts": [],
+                                            "profile_url": href or f"https://space.bilibili.com/{author_id}",
+                                        })
+                                        record["fans"] = max(record.get("fans", 0), fans)
+                                        record["total_posts"] = max(record.get("total_posts", 0), videos)
+                                        if sample_title and not record["posts"]:
+                                            record["posts"] = [{
+                                                "content": sample_title,
+                                                "url": record["profile_url"],
+                                                "likes": 0,
+                                            }]
+                        except Exception as e:
+                            print(f"[B站博主搜索] 解析JS数据失败: {e}")
+                except Exception as e:
+                    print(f"[B站博主搜索] JS获取失败: {e}")
+
+                # 方法2: 传统DOM遍历（备选）
+                if len(up_stats) < limit:
+                    try:
+                        # 滚动到不同位置获取更多元素
+                        scroll_pos = scroll_count * 800
+                        self.driver.execute_script(f"window.scrollTo(0, {scroll_pos});")
+                        time.sleep(1)
+                        
+                        # 查找所有用户相关的链接
+                        all_links = self.driver.find_elements(By.CSS_SELECTOR, 
+                            "a[href*='/space/']")
+                        
+                        for link in all_links:
+                            try:
+                                href = link.get_attribute("href") or ""
+                                if not href or "/space/" not in href:
+                                    continue
+                                
+                                author_id = href.split("/")[-1].split("?")[0]
+                                if not author_id:
+                                    continue
+                                
+                                # 获取用户名
+                                try:
+                                    author = self._clean_text(link.text.strip())
+                                except:
+                                    author = ""
+
+                                if not author or len(author) < 2:
+                                    author = author_id
+                                
+                                if self._should_filter_author(author):
+                                    continue
+                                
+                                if author_id not in up_stats:
+                                    up_stats[author_id] = {
+                                        "author_id": author_id,
+                                        "author": author,
+                                        "fans": 0,
+                                        "total_posts": 0,
+                                        "posts": [],
+                                        "profile_url": href,
+                                    }
+                            except:
+                                continue
                     except Exception as e:
-                        continue
+                        print(f"[B站博主搜索] DOM遍历失败: {e}")
 
-                # 检查是否已收集到足够多的 up 主
-                if len(up_stats) >= limit * 2:
+                print(f"[B站博主搜索] 当前已收集 {len(up_stats)} 个博主")
+
+                if len(up_stats) >= limit:
                     break
 
-                # 滚动
+                # 滚动加载更多
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(random.uniform(1, 2))
+                time.sleep(2)
                 scroll_count += 1
 
-            # 5. 按粉丝数排序
+            if not up_stats:
+                vision_results = self._search_top_influencers_with_vision(keyword, limit)
+                for inf in vision_results:
+                    up_stats[inf["author_id"]] = inf
+
+            # 按粉丝数排序
             influencers = list(up_stats.values())
             influencers.sort(key=lambda x: x.get("fans", 0), reverse=True)
 
-            # 6. 返回结果
             result = []
             for inf in influencers[:limit]:
                 result.append({
@@ -314,16 +425,98 @@ class BilibiliBot:
                     "fans": inf["fans"],
                     "total_posts": inf["total_posts"],
                     "platform": "bilibili",
-                    "profile_url": f"https://space.bilibili.com/{inf['author_id']}",
+                    "profile_url": inf["profile_url"],
                 })
 
             if not result:
-                self.last_error = f"未找到相关博主，当前页面URL: {self.driver.current_url}"
+                self.last_error = f"未找到关键词'{keyword}'相关的B站博主"
 
             return result
         except Exception as exc:
             self.last_error = f"搜索博主失败: {exc}"
             return []
+
+    def _clean_text(self, text: str) -> str:
+        if not text:
+            return ""
+        text = re.sub(r"<[^>]+>", "", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _search_top_influencers_with_vision(self, keyword: str, limit: int) -> list[dict[str, Any]]:
+        if not self.driver or not self.vision_client.is_available():
+            return []
+
+        try:
+            screenshot_base64 = self.driver.get_screenshot_as_base64()
+            creators = self.vision_client.extract_bilibili_creators(
+                screenshot_base64=screenshot_base64,
+                keyword=keyword,
+                limit=limit,
+            )
+            if not creators:
+                return []
+
+            links = self._collect_space_links()
+            results: list[dict[str, Any]] = []
+            for item in creators:
+                author = self._clean_text(item.get("author", ""))
+                if not author or self._should_filter_author(author):
+                    continue
+
+                matched = self._match_creator_link(author, links)
+                author_id = matched.get("author_id") or author
+                profile_url = matched.get("profile_url") or ""
+                results.append({
+                    "author_id": author_id,
+                    "author": author,
+                    "fans": item.get("fans", 0),
+                    "total_posts": item.get("total_posts", 0),
+                    "posts": [],
+                    "profile_url": profile_url or f"https://space.bilibili.com/{author_id}",
+                })
+            print(f"[B站博主搜索] VLM识别到 {len(results)} 个博主")
+            return results
+        except Exception as exc:
+            print(f"[B站博主搜索] VLM识别失败: {exc}")
+            return []
+
+    def _collect_space_links(self) -> list[dict[str, str]]:
+        if not self.driver:
+            return []
+        links: list[dict[str, str]] = []
+        for link in self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/space/']"):
+            try:
+                href = (link.get_attribute("href") or "").strip()
+                if not href or "/space/" not in href:
+                    continue
+                author = self._clean_text(link.text or "")
+                author_id = href.rstrip("/").split("/")[-1].split("?")[0]
+                links.append({
+                    "author": author,
+                    "author_id": author_id,
+                    "profile_url": href,
+                })
+            except Exception:
+                continue
+        return links
+
+    def _match_creator_link(self, author: str, links: list[dict[str, str]]) -> dict[str, str]:
+        author_key = self._normalize_author(author)
+        if not author_key:
+            return {}
+
+        for link in links:
+            link_author = self._normalize_author(link.get("author", ""))
+            if link_author and link_author == author_key:
+                return link
+        for link in links:
+            link_author = self._normalize_author(link.get("author", ""))
+            if link_author and (author_key in link_author or link_author in author_key):
+                return link
+        return {}
+
+    def _normalize_author(self, author: str) -> str:
+        return re.sub(r"[\W_]+", "", (author or "").lower())
 
     def _should_filter_author(self, author: str) -> bool:
         """过滤不想要的作者"""

@@ -111,22 +111,31 @@
                     <div class="influencer-rank">#{{ loop.index }}</div>
                     <div class="influencer-info">
                         <div class="influencer-name">
-                            <a href="https://x.com/{{ inf.author_id }}" target="_blank">@{{ inf.author }}</a>
+                            <a href="{{ inf.profile_url or ('https://x.com/' ~ inf.author_id) }}" target="_blank">
+                                {% if platform == 'x' %}@{% endif %}{{ inf.author }}
+                            </a>
                         </div>
                         <div class="influencer-stats">
+                            {% if platform == 'bilibili' %}
+                            <span>视频数: <strong>{{ inf.total_posts or 0 }}</strong></span>
+                            <span>粉丝数: <strong class="stat-highlight">{{ inf.fans or 0 }}</strong></span>
+                            {% else %}
                             <span>总帖子: <strong>{{ inf.total_posts }}</strong></span>
                             <span>总点赞: <strong class="stat-highlight">{{ inf.total_likes }}</strong></span>
                             <span>平均点赞: <strong>{{ inf.avg_likes }}</strong></span>
+                            {% endif %}
                         </div>
                         {% if inf.posts %}
                         <div class="post-preview">
                             {% for post in inf.posts[:3] %}
                             <div class="post-preview-title">
-                                <a href="{{ post.url }}" target="_blank">{{ post.content }}</a>
+                                <a href="{{ post.url or inf.profile_url }}" target="_blank">{{ post.content }}</a>
                             </div>
+                            {% if platform != 'bilibili' %}
                             <div class="post-preview-meta">
                                 <span>👍 {{ post.likes }}</span>
                             </div>
+                            {% endif %}
                             {% endfor %}
                         </div>
                         {% endif %}
