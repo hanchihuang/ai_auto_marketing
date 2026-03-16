@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -197,6 +198,210 @@ def search_posts_for_account(account: dict, keyword: str, limit_value: int) -> d
         "web_accessible_count": web_accessible_count,
         "platform_label": platform_label,
     }
+
+
+def comment_user_posts_for_account(
+    account: dict,
+    product: dict,
+    strategy: str,
+    target_user: str,
+    post_limit: int = 50,
+) -> dict:
+    """抓取指定博主最近帖子并逐条评论"""
+    platform = account.get("platform", "x")
+    platform_label = PLATFORM_LABELS.get(platform, platform)
+
+    bot = ensure_logged_in_bot(account)
+    if bot is None:
+        return {"ok": False, "message": "账号缺少可用登录信息，请重新登录"}
+    if account["id"] not in bots and getattr(bot, "last_error", ""):
+        return {"ok": False, "message": bot.last_error or "Cookie 登录失败，请到账号管理重新登录"}
+
+    normalized_target = (target_user or "").strip()
+    if platform == "x":
+        normalized_target = re.sub(
+            r"^https?://(www\.)?(x|twitter)\.com/",
+            "",
+            normalized_target,
+            flags=re.IGNORECASE,
+        )
+        normalized_target = normalized_target.split("?")[0].split("/")[0].lstrip("@").strip()
+    elif platform == "bilibili":
+        normalized_target = re.sub(r"\D", "", normalized_target)
+
+    if not normalized_target:
+        return {"ok": False, "message": f"{platform_label} 目标博主标识无效"}
+
+    try:
+        posts = bot.get_user_posts(normalized_target, limit=post_limit)
+    except Exception as exc:
+        return {"ok": False, "message": f"获取博主帖子失败: {exc}"}
+
+    if not posts:
+        return {
+            "ok": False,
+            "message": bot.last_error or f"未找到 {normalized_target} 的最近帖子",
+            "target_user": normalized_target,
+        }
+
+    existing_tasks = storage.list_xhs_comment_tasks(status="success", platform=platform)
+    commented_post_ids = {t["post_id"] for t in existing_tasks}
+    posts_to_comment = [p for p in posts if p["post_id"] not in commented_post_ids]
+
+    if not posts_to_comment:
+        return {
+            "ok": True,
+            "target_user": normalized_target,
+            "fetched_posts": len(posts),
+            "attempted_posts": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "skipped_existing": len(posts),
+            "message": f"{normalized_target} 的最近帖子都已经评论过了",
+        }
+
+    if is_tardis_product(product):
+        strategy_enum = (
+            TardisCommentStrategy(strategy)
+            if strategy in [s.value for s in TardisCommentStrategy]
+            else TardisCommentStrategy.DIAGNOSIS
+        )
+    else:
+        try:
+            strategy_enum = CommentStrategy(strategy)
+        except ValueError:
+            return {"ok": False, "message": "评论策略无效", "target_user": normalized_target}
+
+    success_count = 0
+    failed_count = 0
+    cd_detected = False
+
+    for post in posts_to_comment[:post_limit]:
+        comment_gen = get_comment_generator(product)
+        if is_tardis_product(product):
+            comment_text = comment_gen.generate_comment(strategy_enum, post.get("content", ""))
+        else:
+            comment_text = comment_gen.generate_comment(strategy_enum)
+
+        success = bot.comment_post(post["post_id"], comment_text, post.get("url", ""))
+        error_message = "" if success else (bot.last_error or "回复失败")
+
+        storage.insert_xhs_comment_task({
+            "post_id": post["post_id"],
+            "platform": platform,
+            "post_title": post.get("title", ""),
+            "content": comment_text,
+            "strategy": strategy,
+            "status": "success" if success else "failed",
+            "error_message": error_message,
+            "commented_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S") if success else "",
+        })
+
+        if success:
+            success_count += 1
+        else:
+            failed_count += 1
+            if "cd时间" in error_message or "不能评论" in error_message or "请稍后再试" in error_message:
+                cd_detected = True
+                break
+
+        if not cd_detected:
+            time.sleep(2)
+
+    storage.insert_xhs_stat({
+        "comments_success": success_count,
+        "comments_failed": failed_count,
+    })
+
+    result = {
+        "ok": True,
+        "platform_label": platform_label,
+        "target_user": normalized_target,
+        "fetched_posts": len(posts),
+        "attempted_posts": min(len(posts_to_comment), post_limit),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "skipped_existing": max(0, len(posts) - min(len(posts_to_comment), post_limit)),
+    }
+    if cd_detected:
+        result["message"] = f"{normalized_target} 评论过程中触发平台限制，任务已提前停止"
+    return result
+
+
+def comment_top_influencers_for_account(
+    account: dict,
+    product: dict,
+    strategy: str,
+    keyword: str,
+    influencer_limit: int = 20,
+    posts_per_influencer: int = 50,
+) -> dict:
+    """按关键词搜索热门博主，并自动评论每个博主的最近帖子"""
+    platform = account.get("platform", "x")
+    platform_label = PLATFORM_LABELS.get(platform, platform)
+
+    bot = ensure_logged_in_bot(account)
+    if bot is None:
+        return {"ok": False, "message": "账号缺少可用登录信息，请重新登录"}
+    if account["id"] not in bots and getattr(bot, "last_error", ""):
+        return {"ok": False, "message": bot.last_error or "Cookie 登录失败，请到账号管理重新登录"}
+    if not hasattr(bot, "search_top_influencers"):
+        return {"ok": False, "message": f"{platform_label} 暂不支持按关键词搜索博主"}
+
+    influencers = bot.search_top_influencers(keyword, limit=influencer_limit)
+    if not influencers:
+        return {
+            "ok": False,
+            "message": getattr(bot, "last_error", "") or f"未找到关键词“{keyword}”对应的热门博主",
+        }
+
+    summary = {
+        "ok": True,
+        "platform": platform,
+        "platform_label": platform_label,
+        "keyword": keyword,
+        "influencers_found": len(influencers),
+        "influencers_processed": 0,
+        "posts_success": 0,
+        "posts_failed": 0,
+        "details": [],
+    }
+
+    for influencer in influencers[:influencer_limit]:
+        target_user = influencer.get("author_id") or influencer.get("profile_url") or influencer.get("author", "")
+        if not target_user:
+            continue
+
+        user_result = comment_user_posts_for_account(
+            account=account,
+            product=product,
+            strategy=strategy,
+            target_user=target_user,
+            post_limit=posts_per_influencer,
+        )
+        summary["influencers_processed"] += 1
+        if user_result.get("ok"):
+            summary["posts_success"] += user_result.get("success_count", 0)
+            summary["posts_failed"] += user_result.get("failed_count", 0)
+        summary["details"].append({
+            "author": influencer.get("author") or target_user,
+            "author_id": influencer.get("author_id", ""),
+            "ok": user_result.get("ok", False),
+            "message": user_result.get("message", ""),
+            "fetched_posts": user_result.get("fetched_posts", 0),
+            "attempted_posts": user_result.get("attempted_posts", 0),
+            "success_count": user_result.get("success_count", 0),
+            "failed_count": user_result.get("failed_count", 0),
+        })
+
+        if user_result.get("message") and "平台限制" in user_result["message"]:
+            summary["message"] = user_result["message"]
+            break
+
+    if not summary["details"]:
+        return {"ok": False, "message": f"{platform_label} 未获得可执行评论的博主列表"}
+
+    return summary
 
 
 def batch_comment_for_account(
@@ -530,6 +735,8 @@ def search_influencers_page():
     default_account_id = get_default_account_id(accounts)
     selected_account_id = account_id or default_account_id
     selected_account = storage.get_xhs_account(selected_account_id) if selected_account_id else None
+    products = storage.list_products()
+    default_product_id = products[0]["id"] if products else None
 
     influencers = []
     error_message = ""
@@ -564,6 +771,8 @@ def search_influencers_page():
         default_account_id=default_account_id,
         keyword=keyword,
         accounts=accounts,
+        products=products,
+        default_product_id=default_product_id,
         influencers=influencers,
         error_message=error_message,
         debug_info=debug_info,
@@ -685,77 +894,91 @@ def user_posts_comment():
         flash("产品不存在", "error")
         return redirect(url_for("user_posts_page", account_id=account_id))
 
-    platform = account.get("platform", "x")
-    platform_label = PLATFORM_LABELS.get(platform, platform)
-
-    bot = ensure_logged_in_bot(account)
-    if bot is None:
-        flash("账号缺少可用登录信息", "error")
+    result = comment_user_posts_for_account(
+        account=account,
+        product=product,
+        strategy=strategy,
+        target_user=target_username,
+        post_limit=max_comments_value,
+    )
+    if not result.get("ok"):
+        flash(result.get("message", "执行失败"), "warning")
         return redirect(url_for("user_posts_page", account_id=account_id))
 
-    # 获取用户帖子
-    try:
-        if platform == "x":
-            posts = bot.get_user_posts(target_username, limit=50)
-        elif platform == "bilibili":
-            # B站使用数字UID
-            posts = bot.get_user_posts(target_username, limit=50)
-        else:
-            flash(f"暂不支持 {platform_label} 的用户帖子获取", "error")
-            return redirect(url_for("user_posts_page", account_id=account_id))
-    except Exception as e:
-        flash(f"获取用户帖子失败: {e}", "error")
-        return redirect(url_for("user_posts_page", account_id=account_id))
-
-    if not posts:
-        flash(f"未找到用户 @{target_username} 的帖子", "warning")
-        return redirect(url_for("user_posts_page", account_id=account_id))
-
-    # 过滤已评论的帖子
-    existing_tasks = storage.list_xhs_comment_tasks(status="success", platform=platform)
-    commented_post_ids = {t["post_id"] for t in existing_tasks}
-    posts_to_comment = [p for p in posts if p["post_id"] not in commented_post_ids]
-
-    if not posts_to_comment:
-        flash(f"用户 @{target_username} 的帖子都已经营销过了", "warning")
-        return redirect(url_for("user_posts_page", account_id=account_id))
-
-    # 执行评论
-    success_count = 0
-    failed_count = 0
-
-    for post in posts_to_comment[:max_comments_value]:
-        comment_gen = get_comment_generator(product)
-        comment_text = comment_gen.generate_comment(CommentStrategy(strategy))
-
-        success = bot.comment_post(post["post_id"], comment_text, post.get("url", ""))
-        error_message = "" if success else (bot.last_error or "回复失败")
-
-        storage.insert_xhs_comment_task({
-            "post_id": post["post_id"],
-            "platform": platform,
-            "post_title": post.get("title", ""),
-            "content": comment_text,
-            "strategy": strategy,
-            "status": "success" if success else "failed",
-            "error_message": error_message,
-            "commented_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S") if success else "",
-        })
-
-        if success:
-            success_count += 1
-        else:
-            failed_count += 1
-            # 检测评论冷却
-            if "cd时间" in error_message or "不能评论" in error_message or "请稍后再试" in error_message:
-                print(f"[{platform_label}] 检测到评论冷却，停止批量任务")
-                break
-
-        time.sleep(random.uniform(3, 8))
-
-    flash(f"用户 @{target_username} 帖子营销完成，成功 {success_count} 条，失败 {failed_count} 条",
-          "success" if success_count > 0 else "warning")
+    flash(
+        (
+            f"用户 {result.get('target_user', target_username)} 帖子营销完成，"
+            f"获取 {result.get('fetched_posts', 0)} 条，"
+            f"成功 {result.get('success_count', 0)} 条，"
+            f"失败 {result.get('failed_count', 0)} 条"
+        ),
+        "success" if result.get("success_count", 0) > 0 else "warning",
+    )
     return redirect(url_for("user_posts_page", account_id=account_id))
+
+
+@app.post("/search/influencers/comment")
+def influencers_comment():
+    """按关键词搜索热门博主，并自动评论每个博主最近帖子"""
+    account_id = request.form.get("account_id", type=int)
+    product_id = request.form.get("product_id", type=int)
+    keyword = request.form.get("keyword", "").strip()
+    strategy = request.form.get("strategy", "soft").strip()
+    influencer_limit = request.form.get("influencer_limit", "20").strip()
+    posts_per_influencer = request.form.get("posts_per_influencer", "50").strip()
+
+    if not account_id:
+        flash("请选择账号", "error")
+        return redirect(url_for("search_influencers_page"))
+    if not keyword:
+        flash("请输入搜索关键词", "error")
+        return redirect(url_for("search_influencers_page", account_id=account_id))
+    if not product_id:
+        flash("请选择产品", "error")
+        return redirect(url_for("search_influencers_page", account_id=account_id, keyword=keyword))
+
+    try:
+        influencer_limit_value = max(1, min(int(influencer_limit), 20))
+        posts_per_influencer_value = max(1, min(int(posts_per_influencer), 50))
+    except ValueError:
+        flash("博主数量和每个博主帖子数必须是数字", "error")
+        return redirect(url_for("search_influencers_page", account_id=account_id, keyword=keyword))
+
+    account = storage.get_xhs_account(account_id)
+    if not account or account["status"] != "online":
+        flash("账号未登录", "error")
+        return redirect(url_for("search_influencers_page", account_id=account_id, keyword=keyword))
+
+    product = storage.get_product(product_id)
+    if not product:
+        flash("产品不存在", "error")
+        return redirect(url_for("search_influencers_page", account_id=account_id, keyword=keyword))
+
+    result = comment_top_influencers_for_account(
+        account=account,
+        product=product,
+        strategy=strategy,
+        keyword=keyword,
+        influencer_limit=influencer_limit_value,
+        posts_per_influencer=posts_per_influencer_value,
+    )
+    if not result.get("ok"):
+        flash(result.get("message", "执行失败"), "warning")
+        return redirect(url_for("search_influencers_page", account_id=account_id, keyword=keyword))
+
+    flash(
+        (
+            f"{result.get('platform_label')} 关键词“{keyword}”自动营销完成："
+            f"找到 {result.get('influencers_found', 0)} 位博主，"
+            f"实际处理 {result.get('influencers_processed', 0)} 位，"
+            f"评论成功 {result.get('posts_success', 0)} 条，"
+            f"失败 {result.get('posts_failed', 0)} 条"
+        ),
+        "success" if result.get("posts_success", 0) > 0 else "warning",
+    )
+    if result.get("message"):
+        flash(result["message"], "warning")
+    return redirect(url_for("comments_page", account_id=account_id))
 
 
 @app.get("/comments/batch")

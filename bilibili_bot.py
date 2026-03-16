@@ -35,6 +35,15 @@ class BilibiliBot:
     # up主搜索URL - 可以直接按粉丝数排序
     UPUSER_SEARCH_URL = "https://search.bilibili.com/upuser"
     FAST_MODE = True
+    KEYWORD_ALIASES = {
+        "crypto": ["加密货币", "数字货币", "区块链", "比特币", "web3"],
+        "bitcoin": ["比特币", "btc", "加密货币", "数字货币"],
+        "web3": ["web3", "区块链", "加密货币", "数字货币"],
+        "ai": ["人工智能", "AI", "AIGC", "机器学习"],
+        "saas": ["SaaS", "软件服务", "企业软件", "创业"],
+        "programming": ["编程", "程序员", "开发", "代码"],
+        "coding": ["编程", "程序员", "开发", "代码"],
+    }
 
     def __init__(self) -> None:
         self.driver: Optional[webdriver.Chrome] = None
@@ -255,158 +264,16 @@ class BilibiliBot:
 
         self.last_error = ""
         try:
-            upuser_url = f"{self.UPUSER_SEARCH_URL}?keyword={quote(keyword)}&order=fans"
-            self.driver.get(upuser_url)
-            time.sleep(5)  # 等待页面完全加载
-
-            if self._is_login_page():
-                self.last_error = "当前账号未登录 Bilibili，无法执行搜索"
-                return []
-
-            print(f"[B站博主搜索] 访问: {self.driver.current_url}")
-
             up_stats: dict[str, dict[str, Any]] = {}
-            scroll_count = 0
-            max_scrolls = 8
-
-            while scroll_count < max_scrolls:
-                time.sleep(1)
-
-                # 方法1: 直接读取页面运行时状态对象
-                try:
-                    js_data = self.driver.execute_script("""
-                        function pickUserModule(searchAllResponse) {
-                            if (!searchAllResponse) return null;
-                            var modules = Array.isArray(searchAllResponse.result) ? searchAllResponse.result : [];
-                            for (var i = 0; i < modules.length; i++) {
-                                var item = modules[i] || {};
-                                if (item.result_type === 'bili_user' || item.result_type === 'upuser') {
-                                    return item;
-                                }
-                            }
-                            return null;
-                        }
-
-                        var searchAllResponse =
-                            window.__pinia?.searchResponse?.searchAllResponse ||
-                            window.__pinia?.state?.value?.searchResponse?.searchAllResponse ||
-                            window.__INITIAL_STATE__?.searchResponse?.searchAllResponse ||
-                            null;
-                        var module = pickUserModule(searchAllResponse);
-                        var users = module && Array.isArray(module.data) ? module.data : [];
-                        if ((!users || users.length === 0) && searchAllResponse?.egg_hit?.result) {
-                            users = searchAllResponse.egg_hit.result;
-                        }
-
-                        var normalized = users.map(function(user) {
-                            var mid = user.mid || user.uid || user.id || '';
-                            return {
-                                id: String(mid || ''),
-                                name: user.uname || user.name || '',
-                                fans: Number(user.fans || 0),
-                                videos: Number(user.videos || 0),
-                                href: mid ? ('https://space.bilibili.com/' + mid) : '',
-                                sample_title: user.res && user.res[0] ? (user.res[0].title || '') : '',
-                            };
-                        }).filter(function(user) {
-                            return user.id && user.name;
-                        });
-
-                        return JSON.stringify(normalized);
-                    """)
-
-                    if js_data and js_data.strip():
-                        try:
-                            users_data = json.loads(js_data)
-                            if users_data and len(users_data) > 0:
-                                print(f"[B站博主搜索] 从JS获取到 {len(users_data)} 个用户")
-                                for u in users_data:
-                                    author_id = u.get('id', '')
-                                    author = self._clean_text(u.get('name', author_id))
-                                    fans = u.get('fans', 0)
-                                    videos = u.get('videos', 0)
-                                    href = u.get('href', '')
-                                    sample_title = self._clean_text(u.get('sample_title', ''))
-
-                                    if author_id and author and self._should_filter_author(author) is False:
-                                        record = up_stats.setdefault(author_id, {
-                                            "author_id": author_id,
-                                            "author": author,
-                                            "fans": 0,
-                                            "total_posts": 0,
-                                            "posts": [],
-                                            "profile_url": href or f"https://space.bilibili.com/{author_id}",
-                                        })
-                                        record["fans"] = max(record.get("fans", 0), fans)
-                                        record["total_posts"] = max(record.get("total_posts", 0), videos)
-                                        if sample_title and not record["posts"]:
-                                            record["posts"] = [{
-                                                "content": sample_title,
-                                                "url": record["profile_url"],
-                                                "likes": 0,
-                                            }]
-                        except Exception as e:
-                            print(f"[B站博主搜索] 解析JS数据失败: {e}")
-                except Exception as e:
-                    print(f"[B站博主搜索] JS获取失败: {e}")
-
-                # 方法2: 传统DOM遍历（备选）
-                if len(up_stats) < limit:
-                    try:
-                        # 滚动到不同位置获取更多元素
-                        scroll_pos = scroll_count * 800
-                        self.driver.execute_script(f"window.scrollTo(0, {scroll_pos});")
-                        time.sleep(1)
-                        
-                        # 查找所有用户相关的链接
-                        all_links = self.driver.find_elements(By.CSS_SELECTOR, 
-                            "a[href*='/space/']")
-                        
-                        for link in all_links:
-                            try:
-                                href = link.get_attribute("href") or ""
-                                if not href or "/space/" not in href:
-                                    continue
-                                
-                                author_id = href.split("/")[-1].split("?")[0]
-                                if not author_id:
-                                    continue
-                                
-                                # 获取用户名
-                                try:
-                                    author = self._clean_text(link.text.strip())
-                                except:
-                                    author = ""
-
-                                if not author or len(author) < 2:
-                                    author = author_id
-                                
-                                if self._should_filter_author(author):
-                                    continue
-                                
-                                if author_id not in up_stats:
-                                    up_stats[author_id] = {
-                                        "author_id": author_id,
-                                        "author": author,
-                                        "fans": 0,
-                                        "total_posts": 0,
-                                        "posts": [],
-                                        "profile_url": href,
-                                    }
-                            except:
-                                continue
-                    except Exception as e:
-                        print(f"[B站博主搜索] DOM遍历失败: {e}")
-
-                print(f"[B站博主搜索] 当前已收集 {len(up_stats)} 个博主")
-
+            for search_keyword in self._expand_influencer_keywords(keyword):
+                self._collect_top_influencers_via_api(search_keyword, up_stats, limit)
                 if len(up_stats) >= limit:
                     break
-
-                # 滚动加载更多
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(2)
-                scroll_count += 1
+                self._collect_top_influencers_for_keyword(search_keyword, up_stats, limit)
+                if self.last_error:
+                    return []
+                if len(up_stats) >= limit:
+                    break
 
             if not up_stats:
                 vision_results = self._search_top_influencers_with_vision(keyword, limit)
@@ -436,11 +303,331 @@ class BilibiliBot:
             self.last_error = f"搜索博主失败: {exc}"
             return []
 
+    def _expand_influencer_keywords(self, keyword: str) -> list[str]:
+        text = self._clean_text(keyword)
+        if not text:
+            return []
+
+        candidates: list[str] = [text]
+        tokens = [token for token in re.split(r"[\s/_-]+", text.lower()) if token]
+        for token in tokens:
+            candidates.extend(self.KEYWORD_ALIASES.get(token, []))
+        if text.lower() in self.KEYWORD_ALIASES:
+            candidates.extend(self.KEYWORD_ALIASES[text.lower()])
+
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for item in candidates:
+            value = self._clean_text(item)
+            key = value.lower()
+            if not value or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(value)
+        return normalized
+
+    def _collect_top_influencers_for_keyword(
+        self,
+        keyword: str,
+        up_stats: dict[str, dict[str, Any]],
+        limit: int,
+    ) -> None:
+        if not self.driver or not keyword:
+            return
+
+        upuser_url = f"{self.UPUSER_SEARCH_URL}?keyword={quote(keyword)}&order=fans"
+        self.driver.get(upuser_url)
+        time.sleep(5)
+
+        if self._is_login_page():
+            self.last_error = "当前账号未登录 Bilibili，无法执行搜索"
+            return
+
+        print(f"[B站博主搜索] 访问: {self.driver.current_url}")
+        scroll_count = 0
+        max_scrolls = 8
+
+        while scroll_count < max_scrolls:
+            time.sleep(1)
+
+            try:
+                js_data = self.driver.execute_script("""
+                    function pickUserModule(searchAllResponse) {
+                        if (!searchAllResponse) return null;
+                        var modules = Array.isArray(searchAllResponse.result) ? searchAllResponse.result : [];
+                        for (var i = 0; i < modules.length; i++) {
+                            var item = modules[i] || {};
+                            if (item.result_type === 'bili_user' || item.result_type === 'upuser') {
+                                return item;
+                            }
+                        }
+                        return null;
+                    }
+
+                    var searchAllResponse =
+                        window.__pinia?.searchResponse?.searchAllResponse ||
+                        window.__pinia?.state?.value?.searchResponse?.searchAllResponse ||
+                        window.__INITIAL_STATE__?.searchResponse?.searchAllResponse ||
+                        null;
+                    var module = pickUserModule(searchAllResponse);
+                    var users = module && Array.isArray(module.data) ? module.data : [];
+                    if ((!users || users.length === 0) && searchAllResponse?.egg_hit?.result) {
+                        users = searchAllResponse.egg_hit.result;
+                    }
+
+                    var normalized = users.map(function(user) {
+                        var mid = user.mid || user.uid || user.id || '';
+                        return {
+                            id: String(mid || ''),
+                            name: user.uname || user.name || '',
+                            fans: Number(user.fans || 0),
+                            videos: Number(user.videos || 0),
+                            href: mid ? ('https://space.bilibili.com/' + mid) : '',
+                            sample_title: user.res && user.res[0] ? (user.res[0].title || '') : '',
+                        };
+                    }).filter(function(user) {
+                        return user.id && user.name;
+                    });
+
+                    return JSON.stringify(normalized);
+                """)
+
+                if js_data and js_data.strip():
+                    try:
+                        users_data = json.loads(js_data)
+                        if users_data:
+                            print(f"[B站博主搜索] 关键词 {keyword} 从JS获取到 {len(users_data)} 个用户")
+                            for u in users_data:
+                                author_id = u.get("id", "")
+                                author = self._clean_text(u.get("name", author_id))
+                                fans = u.get("fans", 0)
+                                videos = u.get("videos", 0)
+                                href = u.get("href", "")
+                                sample_title = self._clean_text(u.get("sample_title", ""))
+
+                                if author_id and author and self._should_filter_author(author) is False:
+                                    record = up_stats.setdefault(author_id, {
+                                        "author_id": author_id,
+                                        "author": author,
+                                        "fans": 0,
+                                        "total_posts": 0,
+                                        "posts": [],
+                                        "profile_url": href or f"https://space.bilibili.com/{author_id}",
+                                    })
+                                    record["fans"] = max(record.get("fans", 0), fans)
+                                    record["total_posts"] = max(record.get("total_posts", 0), videos)
+                                    if sample_title and not record["posts"]:
+                                        record["posts"] = [{
+                                            "content": sample_title,
+                                            "url": record["profile_url"],
+                                            "likes": 0,
+                                        }]
+                    except Exception as e:
+                        print(f"[B站博主搜索] 解析JS数据失败: {e}")
+            except Exception as e:
+                print(f"[B站博主搜索] JS获取失败: {e}")
+
+            if len(up_stats) < limit:
+                try:
+                    scroll_pos = scroll_count * 800
+                    self.driver.execute_script(f"window.scrollTo(0, {scroll_pos});")
+                    time.sleep(1)
+
+                    all_links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/space/']")
+                    for link in all_links:
+                        try:
+                            href = link.get_attribute("href") or ""
+                            if not href or "/space/" not in href:
+                                continue
+
+                            author_id = href.split("/")[-1].split("?")[0]
+                            if not author_id:
+                                continue
+
+                            author = self._clean_text(link.text.strip())
+                            if not author or len(author) < 2:
+                                author = author_id
+
+                            if self._should_filter_author(author):
+                                continue
+
+                            if author_id not in up_stats:
+                                up_stats[author_id] = {
+                                    "author_id": author_id,
+                                    "author": author,
+                                    "fans": 0,
+                                    "total_posts": 0,
+                                    "posts": [],
+                                    "profile_url": href,
+                                }
+                        except Exception:
+                            continue
+                except Exception as e:
+                    print(f"[B站博主搜索] DOM遍历失败: {e}")
+
+            print(f"[B站博主搜索] 关键词 {keyword} 当前已收集 {len(up_stats)} 个博主")
+
+            if len(up_stats) >= limit:
+                break
+
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            scroll_count += 1
+
+    def _collect_top_influencers_via_api(
+        self,
+        keyword: str,
+        up_stats: dict[str, dict[str, Any]],
+        limit: int,
+    ) -> None:
+        if not self.driver or not keyword or len(up_stats) >= limit:
+            return
+
+        try:
+            page = 1
+            max_pages = min(5, max(1, (limit + 19) // 20 + 1))
+            while page <= max_pages and len(up_stats) < limit:
+                payload = self._fetch_bilibili_user_search_api(keyword, page=page)
+                users = self._extract_bilibili_user_results(payload)
+                if not users:
+                    break
+
+                print(f"[B站博主搜索] 关键词 {keyword} 从API获取到 {len(users)} 个用户，页码 {page}")
+                before_count = len(up_stats)
+                for user in users:
+                    author_id = user.get("author_id", "")
+                    author = self._clean_text(user.get("author", author_id))
+                    if not author_id or not author or self._should_filter_author(author):
+                        continue
+
+                    record = up_stats.setdefault(author_id, {
+                        "author_id": author_id,
+                        "author": author,
+                        "fans": 0,
+                        "total_posts": 0,
+                        "posts": [],
+                        "profile_url": user.get("profile_url") or f"https://space.bilibili.com/{author_id}",
+                    })
+                    record["fans"] = max(record.get("fans", 0), self._safe_int(user.get("fans")))
+                    record["total_posts"] = max(record.get("total_posts", 0), self._safe_int(user.get("total_posts")))
+
+                    sample_title = self._clean_text(user.get("sample_title", ""))
+                    if sample_title and not record["posts"]:
+                        record["posts"] = [{
+                            "content": sample_title,
+                            "url": record["profile_url"],
+                            "likes": 0,
+                        }]
+
+                if len(up_stats) == before_count:
+                    break
+                page += 1
+        except Exception as exc:
+            print(f"[B站博主搜索] API获取失败: {exc}")
+
+    def _fetch_bilibili_user_search_api(self, keyword: str, page: int = 1) -> dict[str, Any]:
+        if not self.driver:
+            return {}
+
+        params = urlencode({
+            "search_type": "bili_user",
+            "keyword": keyword,
+            "order": "fans",
+            "order_sort": 0,
+            "user_type": 1,
+            "page": page,
+        })
+        api_url = f"https://api.bilibili.com/x/web-interface/search/type?{params}"
+
+        script = """
+            const url = arguments[0];
+            const done = arguments[arguments.length - 1];
+            fetch(url, {
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+            .then(async (resp) => {
+                const text = await resp.text();
+                done(JSON.stringify({
+                    ok: resp.ok,
+                    status: resp.status,
+                    body: text
+                }));
+            })
+            .catch((err) => {
+                done(JSON.stringify({
+                    ok: false,
+                    status: 0,
+                    error: String(err)
+                }));
+            });
+        """
+        raw = self.driver.execute_async_script(script, api_url)
+        if not raw:
+            return {}
+
+        result = json.loads(raw)
+        if not result.get("ok"):
+            status = result.get("status", 0)
+            error = self._clean_text(result.get("error", "") or result.get("body", ""))
+            raise RuntimeError(f"HTTP {status}: {error[:200]}")
+
+        body = result.get("body", "")
+        if not body:
+            return {}
+        payload = json.loads(body)
+        if payload.get("code") not in (0, None):
+            raise RuntimeError(f"code={payload.get('code')} message={payload.get('message')}")
+        return payload
+
+    def _extract_bilibili_user_results(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return []
+
+        raw_results = data.get("result")
+        if not isinstance(raw_results, list):
+            return []
+
+        users: list[dict[str, Any]] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            author_id = str(item.get("mid") or item.get("uid") or item.get("id") or "").strip()
+            author = self._clean_text(str(item.get("uname") or item.get("name") or ""))
+            if not author_id or not author:
+                continue
+            users.append({
+                "author_id": author_id,
+                "author": author,
+                "fans": item.get("fans", 0),
+                "total_posts": item.get("videos", 0),
+                "profile_url": f"https://space.bilibili.com/{author_id}",
+                "sample_title": self._clean_text(str(item.get("usign") or item.get("official_verify") or "")),
+            })
+        return users
+
     def _clean_text(self, text: str) -> str:
         if not text:
             return ""
         text = re.sub(r"<[^>]+>", "", text)
         return re.sub(r"\s+", " ", text).strip()
+
+    def _safe_int(self, value: Any) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, (int, float)):
+            return int(value)
+        text = self._clean_text(str(value))
+        if not text:
+            return 0
+        match = re.search(r"\d[\d,]*", text)
+        if not match:
+            return 0
+        return int(match.group(0).replace(",", ""))
 
     def _search_top_influencers_with_vision(self, keyword: str, limit: int) -> list[dict[str, Any]]:
         if not self.driver or not self.vision_client.is_available():
@@ -621,58 +808,58 @@ class BilibiliBot:
 
         self.last_error = ""
         try:
-            # 访问用户空间页面
-            user_url = f"https://space.bilibili.com/{user_id}"
+            normalized_user_id = self._normalize_bilibili_user_id(user_id)
+            if not normalized_user_id:
+                self.last_error = "请输入有效的 B站 UID 或空间链接"
+                return []
+
+            # 直接进入投稿页，避免个人主页结构差异
+            user_url = f"https://space.bilibili.com/{normalized_user_id}/upload/video"
             self.driver.get(user_url)
-            time.sleep(3)
+            time.sleep(5)
 
             posts: list[dict[str, Any]] = []
-            scroll_count = 0
             seen_ids: set[str] = set()
+            scroll_count = 0
 
-            while len(posts) < limit and scroll_count < 15:
-                # 尝试查找视频卡片
-                video_items = self.driver.find_elements(By.CSS_SELECTOR, ".video-card")
-                if not video_items:
-                    video_items = self.driver.find_elements(By.CSS_SELECTOR, ".cube-list-item")
+            while len(posts) < limit and scroll_count < 6:
+                time.sleep(3)
+                video_links = self.driver.find_elements(By.CSS_SELECTOR, "a")
 
-                for item in video_items:
+                for link_el in video_links:
                     try:
-                        # 获取视频链接
-                        link_el = item.find_elements(By.CSS_SELECTOR, "a[href*='/video/']")
-                        if not link_el:
-                            continue
-                        link = link_el[0].get_attribute("href")
+                        link = (link_el.get_attribute("href") or "").strip()
                         if not link:
                             continue
 
-                        # 提取视频ID
-                        import re
-                        match = re.search(r'/video/([BbVv]+[\w]+)', link)
+                        match = re.search(r"/video/(BV[\w]+)", link, re.I)
                         if not match:
                             continue
                         bvid = match.group(1)
-
                         if bvid in seen_ids:
                             continue
+
+                        title = self._clean_text(link_el.text or "")
+                        if not title:
+                            title = self._clean_text(
+                                link_el.get_attribute("title")
+                                or link_el.get_attribute("aria-label")
+                                or ""
+                            )
+                        # 过滤掉播放量/时长等非标题文本
+                        if title and (len(title) < 6 or re.fullmatch(r"[\d\s:]+", title)):
+                            continue
+
                         seen_ids.add(bvid)
-
-                        # 获取标题
-                        title_el = item.find_elements(By.CSS_SELECTOR, ".title, .video-title")
-                        title = title_el[0].text if title_el else ""
-
-                        # 获取播放量
-                        play_el = item.find_elements(By.CSS_SELECTOR, ".play, .stat-item")
-                        play_text = play_el[0].text if play_el else "0"
 
                         posts.append({
                             "post_id": bvid,
                             "title": title[:100] if title else f"视频 {bvid}",
-                            "content": title,
-                            "author_id": user_id,
+                            "content": title or f"视频 {bvid}",
+                            "author_id": normalized_user_id,
                             "likes": 0,
                             "comments": 0,
-                            "url": link,
+                            "url": link.split("?")[0],
                         })
 
                         if len(posts) >= limit:
@@ -683,15 +870,100 @@ class BilibiliBot:
                 if len(posts) >= limit:
                     break
 
-                # 滚动加载更多
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(2)
                 scroll_count += 1
+
+            if not posts:
+                posts = self._fallback_search_user_posts_by_titles(normalized_user_id, limit)
+            if not posts:
+                self.last_error = f"未找到 UID {normalized_user_id} 的可见视频投稿"
 
             return posts[:limit]
         except Exception as exc:
             self.last_error = f"获取用户帖子失败: {exc}"
             return []
+
+    def _normalize_bilibili_user_id(self, user_id: str) -> str:
+        value = (user_id or "").strip()
+        if not value:
+            return ""
+        match = re.search(r"space\.bilibili\.com/(\d+)", value)
+        if match:
+            return match.group(1)
+        match = re.search(r"(\d+)", value)
+        if match:
+            return match.group(1)
+        return ""
+
+    def _fallback_search_user_posts_by_titles(self, user_id: str, limit: int) -> list[dict[str, Any]]:
+        if not self.driver:
+            return []
+
+        try:
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+        except Exception:
+            return []
+
+        candidates = self._extract_bilibili_video_titles(body_text)
+        author_name = candidates[0] if candidates else ""
+        search_queries = []
+        if author_name:
+            search_queries.append(author_name)
+        search_queries.extend(candidates[2:])
+        posts: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        for title in search_queries[: min(limit * 3, 20)]:
+            try:
+                matched_posts = self.search_posts(title, limit=5)
+            except Exception:
+                matched_posts = []
+
+            for post in matched_posts:
+                post_id = post.get("post_id", "")
+                post_title = self._clean_text(post.get("title", "") or post.get("content", ""))
+                if not post_id or post_id in seen_ids:
+                    continue
+                if title != author_name and title not in post_title and post_title not in title:
+                    continue
+                seen_ids.add(post_id)
+                posts.append({
+                    "post_id": post_id,
+                    "title": post.get("title", "") or title,
+                    "content": post.get("content", "") or title,
+                    "author_id": user_id,
+                    "likes": post.get("likes", 0),
+                    "comments": post.get("comments", 0),
+                    "url": post.get("url", ""),
+                })
+                break
+
+            if len(posts) >= limit:
+                break
+
+        return posts[:limit]
+
+    def _extract_bilibili_video_titles(self, body_text: str) -> list[str]:
+        lines = [self._clean_text(line) for line in (body_text or "").splitlines()]
+        titles: list[str] = []
+        noise = {
+            "首页", "番剧", "直播", "游戏中心", "会员购", "漫画", "赛事", "下载客户端", "关注", "发消息",
+            "主页", "动态", "投稿", "合集和系列", "课堂", "视频", "图文", "音频", "TA的视频", "播放全部",
+            "最新发布", "最多播放", "最多收藏", "更多筛选", "关注数", "粉丝数", "获赞数", "播放数",
+        }
+        for line in lines:
+            if not line or line in noise:
+                continue
+            if len(line) < 6:
+                continue
+            if re.fullmatch(r"[\d.\s:+万]+", line):
+                continue
+            if re.fullmatch(r"\d{2}-\d{2}", line) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", line):
+                continue
+            if line not in titles:
+                titles.append(line)
+        return titles
 
     def comment_post(self, post_id: str, content: str, post_url: str = "") -> bool:
         if not self.driver:

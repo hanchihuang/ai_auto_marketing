@@ -508,41 +508,89 @@ class XiaohongshuBot:
 
         self.last_error = ""
         try:
-            # 访问用户主页
-            user_url = f"{self.BASE_URL}/{username.lstrip('@')}"
-            self.driver.get(user_url)
-            time.sleep(5)
-
-            if self._is_login_page():
-                self.last_error = "当前账号未登录 X.com，无法获取用户帖子"
+            normalized_username = self._normalize_x_username(username)
+            if not normalized_username:
+                self.last_error = "用户名格式无效"
                 return []
 
-            posts: list[dict[str, Any]] = []
-            scroll_count = 0
-            seen_ids: set[str] = set()
+            profile_urls = [
+                f"{self.BASE_URL}/{normalized_username}",
+                f"{self.BASE_URL}/{normalized_username}/with_replies",
+            ]
 
-            while len(posts) < limit and scroll_count < 15:
-                articles = self.driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
-                for article in articles:
-                    post = self._parse_tweet_simple(article)
-                    if not post or post["post_id"] in seen_ids:
-                        continue
-                    seen_ids.add(post["post_id"])
-                    posts.append(post)
+            for user_url in profile_urls:
+                self.driver.get(user_url)
+                time.sleep(5)
+
+                if self._is_login_page():
+                    self.last_error = "当前账号未登录 X.com，无法获取用户帖子"
+                    return []
+
+                page_error = self._detect_user_profile_error(normalized_username)
+                if page_error:
+                    self.last_error = page_error
+                    continue
+
+                posts: list[dict[str, Any]] = []
+                scroll_count = 0
+                seen_ids: set[str] = set()
+
+                while len(posts) < limit and scroll_count < 15:
+                    articles = self.driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
+                    if not articles:
+                        articles = self.driver.find_elements(By.CSS_SELECTOR, 'article[role="article"]')
+
+                    for article in articles:
+                        post = self._parse_tweet_simple(article)
+                        if not post or post["post_id"] in seen_ids:
+                            continue
+                        author_id = (post.get("author_id") or "").lstrip("@").lower()
+                        if author_id and author_id != normalized_username.lower():
+                            continue
+                        seen_ids.add(post["post_id"])
+                        posts.append(post)
+                        if len(posts) >= limit:
+                            break
+
                     if len(posts) >= limit:
                         break
 
-                if len(posts) >= limit:
-                    break
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(random.uniform(*self.config.get("scroll_delay", (2, 4))))
+                    scroll_count += 1
 
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(random.uniform(*self.config.get("scroll_delay", (2, 4))))
-                scroll_count += 1
+                if posts:
+                    return posts[:limit]
 
-            return posts[:limit]
+            return []
         except Exception as exc:
             self.last_error = f"获取用户帖子失败: {exc}"
             return []
+
+    def _normalize_x_username(self, username: str) -> str:
+        value = (username or "").strip()
+        value = re.sub(r"^https?://(www\.)?(x|twitter)\.com/", "", value, flags=re.IGNORECASE)
+        value = value.split("?")[0].strip("/")
+        if "/" in value:
+            value = value.split("/")[0]
+        return value.lstrip("@").strip()
+
+    def _detect_user_profile_error(self, username: str) -> str:
+        if not self.driver:
+            return "浏览器未初始化"
+
+        current_url = (self.driver.current_url or "").lower()
+        body = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+
+        if "/i/flow/login" in current_url:
+            return "当前账号未登录 X.com"
+        if "this account doesn’t exist" in body or "this account doesn't exist" in body:
+            return f"用户 @{username} 不存在"
+        if "these posts are protected" in body or "这些帖子受保护" in body:
+            return f"用户 @{username} 的帖子受保护"
+        if "hasn't posted" in body or "还没有发帖" in body:
+            return f"用户 @{username} 暂无可见帖子"
+        return ""
 
     def _parse_tweet_simple(self, article) -> Optional[dict[str, Any]]:
         """简化版推文解析"""
@@ -720,64 +768,98 @@ class XiaohongshuBot:
 
         self.last_error = ""
         candidate_url = post_url or f"{self.BASE_URL}/i/web/status/{post_id}"
-        try:
-            self.driver.get(candidate_url)
-            time.sleep(5)
 
-            page_error = self._detect_uncommentable_page()
-            if page_error:
-                self.last_error = page_error
-                return False
-
-            self._dismiss_overlays()
-            editor = self._find_reply_editor(timeout=4)
-            if editor is None:
-                reply_button = self._find_clickable(
-                    [
-                        (By.CSS_SELECTOR, '[data-testid="reply"]'),
-                        (By.XPATH, '//button[contains(@aria-label, "Reply") or contains(@aria-label, "回复")]'),
-                        (By.XPATH, '//*[contains(@aria-label, "Reply") or contains(@aria-label, "回复")]/ancestor::button[1]'),
-                    ],
-                    timeout=8,
-                )
-                if reply_button is not None:
-                    self._safe_click(reply_button)
-                    time.sleep(1.5)
-                    self._dismiss_overlays()
-                editor = self._find_reply_editor(timeout=8)
-            if editor is None:
-                self.last_error = "未找到回复输入框，可能当前账号无回复权限或页面结构变化"
-                return False
-
-            self._safe_click(editor)
-            self.driver.execute_script("arguments[0].focus();", editor)
+        # 增强导航：确保访问正确的帖子页面
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                editor.send_keys(Keys.CONTROL, "a")
-                editor.send_keys(Keys.DELETE)
-            except Exception:
-                pass
-            editor.send_keys(content)
-            time.sleep(1)
+                self.driver.get(candidate_url)
+                time.sleep(5)
 
-            send_button = self._find_clickable(
-                [
-                    (By.CSS_SELECTOR, '[data-testid="tweetButton"]'),
-                    (By.CSS_SELECTOR, '[data-testid="tweetButtonInline"]'),
-                    (By.XPATH, '//div[@role="dialog"]//button[@data-testid="tweetButton"]'),
-                    (By.XPATH, '//span[text()="Reply"]/ancestor::button'),
-                ],
-                timeout=8,
-            )
-            if send_button is None:
-                self.last_error = "未找到回复发送按钮"
+                # 检查是否被重定向到非帖子页面
+                current_url = self.driver.current_url.lower()
+                if "/status/" not in current_url:
+                    # 尝试直接使用 post_id 构建 URL
+                    if attempt == 0:
+                        # 尝试从 post_url 中提取正确的 username
+                        if post_url and "/status/" in post_url:
+                            candidate_url = post_url
+                            self.last_error = f"URL重定向检测，尝试备用URL (尝试 {attempt + 1}/{max_retries})"
+                            continue
+                    self.last_error = f"页面未正确加载为帖子详情页，当前URL: {current_url}"
+                    return False
+
+                # 验证是否到达正确的帖子页面
+                page_error = self._detect_uncommentable_page()
+                if page_error:
+                    self.last_error = page_error
+                    return False
+
+                # 检查是否需要登录
+                if self._is_login_page():
+                    self.last_error = "Cookie已失效，需要重新登录"
+                    return False
+
+                self._dismiss_overlays()
+                editor = self._find_reply_editor(timeout=4)
+                if editor is None:
+                    # 更多选择器尝试
+                    reply_button = self._find_clickable(
+                        [
+                            (By.CSS_SELECTOR, '[data-testid="reply"]'),
+                            (By.CSS_SELECTOR, '[data-testid="SideNav_Reply_Button"]'),
+                            (By.XPATH, '//button[contains(@aria-label, "Reply") or contains(@aria-label, "回复")]'),
+                            (By.XPATH, '//*[contains(@aria-label, "Reply") or contains(@aria-label, "回复")]/ancestor::button[1]'),
+                            (By.XPATH, '//div[@data-testid="reply"]//button'),
+                        ],
+                        timeout=10,
+                    )
+                    if reply_button is not None:
+                        self._safe_click(reply_button)
+                        time.sleep(2)
+                        self._dismiss_overlays()
+                    editor = self._find_reply_editor(timeout=10)
+                if editor is None:
+                    self.last_error = "未找到回复输入框，可能当前账号无回复权限或页面结构变化"
+                    return False
+
+                self._safe_click(editor)
+                self.driver.execute_script("arguments[0].focus();", editor)
+                try:
+                    editor.send_keys(Keys.CONTROL, "a")
+                    editor.send_keys(Keys.DELETE)
+                except Exception:
+                    pass
+                editor.send_keys(content)
+                time.sleep(1)
+
+                send_button = self._find_clickable(
+                    [
+                        (By.CSS_SELECTOR, '[data-testid="tweetButton"]'),
+                        (By.CSS_SELECTOR, '[data-testid="tweetButtonInline"]'),
+                        (By.CSS_SELECTOR, '[data-testid="sendButton"]'),
+                        (By.XPATH, '//div[@role="dialog"]//button[@data-testid="tweetButton"]'),
+                        (By.XPATH, '//span[text()="Reply"]/ancestor::button'),
+                        (By.XPATH, '//button[@role="button" and .//span[text()="Reply"]]'),
+                    ],
+                    timeout=10,
+                )
+                if send_button is None:
+                    self.last_error = "未找到回复发送按钮"
+                    return False
+
+                self._safe_click(send_button)
+                time.sleep(3)
+                return True
+
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    self.last_error = f"评论重试中: {exc}"
+                    time.sleep(2)
+                    continue
+                self.last_error = f"回复失败: {exc}"
                 return False
-
-            self._safe_click(send_button)
-            time.sleep(3)
-            return True
-        except Exception as exc:
-            self.last_error = f"回复失败: {exc}"
-            return False
+        return False
 
     def _find_reply_editor(self, timeout: int = 5):
         selectors = [
@@ -881,32 +963,85 @@ class XiaohongshuBot:
             return "浏览器未启动"
 
         current_url = (self.driver.current_url or "").lower()
-        body = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+        body_text = ""
+        try:
+            body = self.driver.find_element(By.TAG_NAME, "body")
+            body_text = body.text.lower()
+        except Exception:
+            pass
 
+        # 登录页检测
         if self._is_login_page():
             return "当前页面跳转到了 X.com 登录页，Cookie 可能已失效"
+
+        # 帖子详情页 URL 检测
         if "/status/" not in current_url:
+            # 额外检查：是否在首页/时间线
+            if any(pattern in current_url for pattern in ["home", "explore", "notifications", "messages"]):
+                return f"当前页面是X.com导航页（非帖子详情页），URL: {current_url}"
             return "当前页面不是推文详情页，无法直接回复"
+
+        # 帖子不可用/被删除/被限制
         blocked_markers = [
             "something went wrong",
             "this post is unavailable",
             "帖子不可用",
             "you’re unable to view this post",
             "cannot retrieve posts at this time",
+            "post not found",
+            "此推文不可用",
+            "suspended",
+            "account suspended",
         ]
-        if any(marker in body for marker in blocked_markers):
+        if any(marker in body_text for marker in blocked_markers):
             return "该推文当前不可访问，无法在网页端回复"
+
+        # 检查是否有登录弹窗遮挡
+        try:
+            overlay_elements = self.driver.find_elements(By.CSS_SELECTOR, "[data-testid='Modal']")
+            for overlay in overlay_elements:
+                if overlay.is_displayed():
+                    close_buttons = overlay.find_elements(By.CSS_SELECTOR, "[data-testid='modal-close']")
+                    if close_buttons:
+                        close_buttons[0].click()
+                        time.sleep(1)
+        except Exception:
+            pass
+
         return ""
 
     def is_post_web_accessible(self, post_url: str) -> bool:
         if not self.driver or not post_url:
             return False
-        try:
-            self.driver.get(post_url)
-            time.sleep(3)
-            return not bool(self._detect_uncommentable_page())
-        except Exception:
-            return False
+
+        # 规范化 URL 格式
+        if not post_url.startswith("http"):
+            post_url = f"{self.BASE_URL}{post_url}"
+
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                self.driver.get(post_url)
+                time.sleep(4)  # 稍微增加等待时间
+
+                # 检查 URL 是否正确加载
+                current_url = self.driver.current_url.lower()
+                if "/status/" not in current_url:
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                        continue
+                    return False
+
+                # 使用增强的检测方法
+                error = self._detect_uncommentable_page()
+                return not bool(error)
+
+            except Exception:
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                return False
+        return False
 
     def batch_comment(
         self,

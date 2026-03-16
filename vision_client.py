@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 from requests import HTTPError
+from requests.exceptions import ProxyError, SSLError
 
 from env_loader import load_local_env
 
@@ -109,24 +110,7 @@ class VisionLLMClient:
         last_error: Exception | None = None
         for model in models:
             try:
-                response = requests.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "temperature": 0.1,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": content,
-                            }
-                        ],
-                    },
-                    timeout=60,
-                )
+                response = self._post_chat_completion(url, api_key, model, content)
                 response.raise_for_status()
                 data = response.json()
                 return (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
@@ -139,6 +123,51 @@ class VisionLLMClient:
         if last_error:
             raise last_error
         return ""
+
+    def _post_chat_completion(
+        self,
+        url: str,
+        api_key: str,
+        model: str,
+        content: list[dict[str, Any]],
+    ) -> requests.Response:
+        payload = {
+            "model": model,
+            "temperature": 0.1,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": content,
+                }
+            ],
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            return requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+        except (ProxyError, SSLError) as exc:
+            # 某些代理对兼容 OpenAI 的长连接/TLS 握手处理不稳定，失败时直接绕过环境代理重试一次。
+            session = requests.Session()
+            session.trust_env = False
+            try:
+                return session.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=60,
+                )
+            except Exception:
+                raise exc
+            finally:
+                session.close()
 
     def _extract_json_object(self, text: str) -> dict[str, Any]:
         try:

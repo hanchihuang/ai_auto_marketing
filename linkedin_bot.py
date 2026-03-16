@@ -80,15 +80,41 @@ class LinkedInBot:
 
         try:
             self.cookie_string = cookie
-            self.driver.get(self.BASE_URL)
-            time.sleep(1)
-            for item in self._parse_cookie_string(cookie):
-                self.driver.add_cookie(item)
-
+            # 先清除旧 cookie
+            self.driver.delete_all_cookies()
             self.driver.get(self.BASE_URL)
             time.sleep(2)
 
+            for item in self._parse_cookie_string(cookie):
+                self.driver.add_cookie(item)
+
+            # 刷新页面让 cookie 生效
+            self.driver.get(self.BASE_URL)
+            time.sleep(3)
+
+            # 增强的登录检测
             if self._is_login_page():
+                # 尝试检查是否有用户头像或其他登录标识
+                try:
+                    user_elements = self.driver.find_elements(By.CSS_SELECTOR, ".profile-card, .nav__profile-menu, .feed-shared-update-v2__author")
+                    if user_elements:
+                        # 可能实际已登录
+                        nickname = self._safe_text(
+                            [
+                                (By.CSS_SELECTOR, ".feed-shared-update-v2__author-title"),
+                                (By.CSS_SELECTOR, ".profile-card-name"),
+                                (By.CSS_SELECTOR, ".profile-top-card-name"),
+                            ]
+                        )
+                        self.account = XiaohongshuAccount(
+                            cookie=cookie,
+                            nickname=nickname or "LinkedIn用户",
+                            status="online",
+                            last_login=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        )
+                        return True
+                except Exception:
+                    pass
                 self.last_error = "LinkedIn Cookie 登录失败，请重新复制浏览器 Cookie"
                 return False
 
@@ -101,7 +127,7 @@ class LinkedInBot:
             )
             self.account = XiaohongshuAccount(
                 cookie=cookie,
-                nickname=nickname or "LinkedIn User",
+                nickname=nickname or "LinkedIn用户",
                 status="online",
                 last_login=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
@@ -158,10 +184,24 @@ class LinkedInBot:
             self.driver.get(search_url)
             time.sleep(5)
 
+            # 检查是否被重定向到登录页
+            if self._is_login_page():
+                self.last_error = "当前账号未登录 LinkedIn，无法执行搜索"
+                return []
+
+            # 等待页面加载
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ".feed-shared-update-v2, .occludable-update, article"))
+                )
+            except Exception:
+                # 尝试直接获取
+                pass
+
             posts: list[dict[str, Any]] = []
             seen_ids: set[str] = set()
             scroll_count = 0
-            max_scrolls = 10
+            max_scrolls = 12
 
             # 多种可能的帖子选择器
             selectors = [
@@ -179,11 +219,20 @@ class LinkedInBot:
                     items = self.driver.find_elements(By.CSS_SELECTOR, sel)
                     if items:
                         break
-                
+
                 if not items:
                     # 如果没找到，尝试查找任何包含内容的元素
                     items = self.driver.find_elements(By.CSS_SELECTOR, ".feed-shared-update-v2, .occludable-update, article")
-                
+
+                if not items:
+                    # 可能是登录检测页
+                    if self._is_login_page():
+                        self.last_error = "LinkedIn 会话已过期，需要重新登录"
+                        break
+                    time.sleep(2)
+                    scroll_count += 1
+                    continue
+
                 for item in items:
                     try:
                         post_id = item.get_attribute("data-id") or item.get_attribute("id") or str(time.time())
@@ -243,6 +292,9 @@ class LinkedInBot:
                 self.driver.execute_script("window.scrollBy(0, 800);")
                 time.sleep(3)
                 scroll_count += 1
+
+            if not posts:
+                self.last_error = f"未找到关键词'{keyword}'相关的LinkedIn内容"
 
             return posts[:limit]
         except Exception as exc:
